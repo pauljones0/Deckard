@@ -1,0 +1,82 @@
+{
+  "purpose": "functional readout validation ONLY; not performance timing",
+  "load_processes": 3,
+  "samples": [
+    {
+      "elapsed": 1.000156241003424,
+      "host_cpu_percent": 68.33541927409262
+    },
+    {
+      "elapsed": 2.000790046993643,
+      "host_cpu_percent": 65.33665835411472
+    },
+    {
+      "elapsed": 3.0009601450001355,
+      "host_cpu_percent": 60.875
+    },
+    {
+      "elapsed": 4.001125312002841,
+      "host_cpu_percent": 60.75
+    },
+    {
+      "elapsed": 5.001294957997743,
+      "host_cpu_percent": 60.723192019950126
+    },
+    {
+      "elapsed": 6.0014651360106654,
+      "host_cpu_percent": 60.79900124843945
+    },
+    {
+      "elapsed": 7.001632978004636,
+      "host_cpu_percent": 60.40100250626566
+    },
+    {
+      "elapsed": 8.001801823003916,
+      "host_cpu_percent": 60.75
+    },
+    {
+      "elapsed": 9.002574109996203,
+      "host_cpu_percent": 61.34663341645885
+    },
+    {
+      "elapsed": 10.002745459001744,
+      "host_cpu_percent": 60.375
+    },
+    {
+      "elapsed": 11.002913551987149,
+      "host_cpu_percent": 61.0
+    },
+    {
+      "elapsed": 12.003089037985774,
+      "host_cpu_percent": 63.21695760598504
+    },
+    {
+      "elapsed": 13.003252382011851,
+      "host_cpu_percent": 62.20275344180225
+    },
+    {
+      "elapsed": 14.003422036999837,
+      "host_cpu_percent": 60.79900124843945
+    },
+    {
+      "elapsed": 15.00358983798651,
+      "host_cpu_percent": 60.75
+    },
+    {
+      "elapsed": 16.003757419995964,
+      "host_cpu_percent": 61.0
+    },
+    {
+      "elapsed": 17.003922625997802,
+      "host_cpu_percent": 61.201501877346686
+    },
+    {
+      "elapsed": 18.00408703100402,
+      "host_cpu_percent": 61.173533083645445
+    },
+    {
+      "elapsed": 19.004236287000822,
+      "host_cpu_percent": 62.25
+    }
+  ]
+}

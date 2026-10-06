@@ -1,5 +1,8 @@
 # Whole-application CPU and RAM comparison
 
+**Measurement correction:** historical CPU rows use a process-tree polling sampler. It counts short-lived threads but can miss detached descendants; those values are archived, not general speedup claims. Current `compare.py` and `endpoints.py` require a delegated cgroup-v2 parent and use kernel `cpu.stat` counters. PSS is sampled across processes in the same cgroup; no compositor or benchmark harness is included. Both tools accept `--cgroup-parent`. See [the audit](../docs/performance-audit.md).
+
+
 These scripts run the real applications, including their interfaces and device-rendering workers. Python here is **measurement/test tooling only** and is never bundled into native Deckard.
 
 [Current Rust GTK results](results/2026-10-06/gtk-0.10) · [Historical results](results/2026-10-06). The following command summarizes the historical 0.5.0 table:
@@ -9,6 +12,19 @@ These scripts run the real applications, including their interfaces and device-r
   benchmarks/results/2026-10-06/visible \
   benchmarks/results/2026-10-06/background
 ```
+
+## Current audit
+
+[Fresh common-action trials and diagnostics](results/2026-10-06/performance-audit) include all three applications, real OSPlugin CPU/RAM readouts and graphs, counter regression fixtures and separate callback/frame checks. The common-action table reports absolute use without general speedup percentages. Source code and captures are documented in [the audit](../docs/performance-audit.md).
+
+```sh
+.venv/bin/python benchmarks/audit_report.py benchmarks/results/2026-10-06/performance-audit
+.venv/bin/python benchmarks/accounting_audit.py --output target/accounting-audit.json
+.venv/bin/python benchmarks/ui_parity.py --native target/release/deckard \
+  --case showcase --output target/configured-ui
+```
+
+Captured `monitoring` and `graphs` scenes validate actual readouts; live values can differ by capture time. The README uses the configured 15-key `showcase`, not the empty timing page.
 
 ## Direct-upstream GTK layout (0.10.0)
 

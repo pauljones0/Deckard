@@ -1,0 +1,2746 @@
+[
+  {
+    "type": "src+windows+mainWindow+mainWindow+MainWindow",
+    "title": null,
+    "css": [
+      "background",
+      "csd"
+    ],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwDialogHost",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwBin",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwBreakpointBin",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwNavigationSplitView",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwBin",
+    "title": null,
+    "css": [
+      "sidebar-pane"
+    ],
+    "bounds": [
+      0.0,
+      0.0,
+      560.0,
+      900.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+Sidebar+Sidebar",
+    "title": null,
+    "css": [],
+    "bounds": [
+      4.0,
+      0.0,
+      552.0,
+      900.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      4.0,
+      0.0,
+      552.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwHeaderBar",
+    "title": null,
+    "css": [
+      "flat"
+    ],
+    "bounds": [
+      3.0,
+      0.0,
+      554.0,
+      46.0
+    ]
+  },
+  {
+    "type": "GtkWindowHandle",
+    "title": null,
+    "css": [],
+    "bounds": [
+      3.0,
+      0.0,
+      554.0,
+      46.0
+    ]
+  },
+  {
+    "type": "GtkCenterBox",
+    "title": null,
+    "css": [],
+    "bounds": [
+      3.0,
+      0.0,
+      554.0,
+      46.0
+    ]
+  },
+  {
+    "type": "AdwGizmo",
+    "title": null,
+    "css": [],
+    "bounds": [
+      10.0,
+      6.0,
+      0.0,
+      34.0
+    ]
+  },
+  {
+    "type": "AdwBin",
+    "title": null,
+    "css": [],
+    "bounds": [
+      178.0,
+      6.0,
+      205.0,
+      34.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+PageSelector+PageSelector",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      178.0,
+      6.0,
+      205.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Page:",
+    "css": [
+      "bold"
+    ],
+    "bounds": [
+      181.0,
+      6.0,
+      41.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "linked"
+    ],
+    "bounds": [
+      229.0,
+      6.0,
+      154.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkMenuButton",
+    "title": null,
+    "css": [
+      "header-page-dropdown"
+    ],
+    "bounds": [
+      229.0,
+      6.0,
+      88.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "toggle"
+    ],
+    "bounds": [
+      229.0,
+      6.0,
+      88.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      239.0,
+      11.0,
+      68.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkGizmo",
+    "title": null,
+    "css": [],
+    "bounds": [
+      239.0,
+      11.0,
+      68.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      239.0,
+      11.0,
+      68.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Bench",
+    "css": [],
+    "bounds": [
+      239.0,
+      11.0,
+      46.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      291.0,
+      11.0,
+      16.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button"
+    ],
+    "bounds": [
+      316.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      321.0,
+      15.0,
+      24.0,
+      16.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button"
+    ],
+    "bounds": [
+      349.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      354.0,
+      15.0,
+      24.0,
+      16.0
+    ]
+  },
+  {
+    "type": "AdwGizmo",
+    "title": null,
+    "css": [],
+    "bounds": [
+      550.0,
+      6.0,
+      0.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      4.0,
+      46.0,
+      552.0,
+      854.0
+    ]
+  },
+  {
+    "type": "GtkStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      4.0,
+      46.0,
+      552.0,
+      854.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+Sidebar+KeyEditor",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      4.0,
+      46.0,
+      552.0,
+      854.0
+    ]
+  },
+  {
+    "type": "GtkScrolledWindow",
+    "title": null,
+    "css": [],
+    "bounds": [
+      4.0,
+      46.0,
+      552.0,
+      854.0
+    ]
+  },
+  {
+    "type": "GtkViewport",
+    "title": null,
+    "css": [],
+    "bounds": [
+      4.0,
+      46.0,
+      552.0,
+      854.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      4.0,
+      46.0,
+      552.0,
+      854.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+StateSwitcher+StateSwitcher",
+    "title": null,
+    "css": [],
+    "bounds": [
+      24.0,
+      56.0,
+      512.0,
+      58.0
+    ]
+  },
+  {
+    "type": "GtkViewport",
+    "title": null,
+    "css": [],
+    "bounds": [
+      24.0,
+      56.0,
+      512.0,
+      58.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "state-switcher-box",
+      "linked"
+    ],
+    "bounds": [
+      196.0,
+      68.0,
+      167.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkStackSwitcher",
+    "title": null,
+    "css": [
+      "state-switcher"
+    ],
+    "bounds": [
+      196.0,
+      68.0,
+      134.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "text-button",
+      "toggle"
+    ],
+    "bounds": [
+      196.0,
+      68.0,
+      134.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "State 1",
+    "css": [],
+    "bounds": [
+      233.0,
+      73.0,
+      60.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button"
+    ],
+    "bounds": [
+      329.0,
+      68.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      334.0,
+      77.0,
+      24.0,
+      16.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+IconSelector+IconSelector",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      182.0,
+      154.0,
+      195.0,
+      195.0
+    ]
+  },
+  {
+    "type": "GtkOverlay",
+    "title": null,
+    "css": [],
+    "bounds": [
+      182.0,
+      154.0,
+      195.0,
+      195.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "no-padding",
+      "icon-selectorkey-image"
+    ],
+    "bounds": [
+      192.0,
+      164.0,
+      175.0,
+      175.0
+    ]
+  },
+  {
+    "type": "GtkOverlay",
+    "title": null,
+    "css": [],
+    "bounds": [
+      192.0,
+      164.0,
+      175.0,
+      175.0
+    ]
+  },
+  {
+    "type": "GtkPicture",
+    "title": null,
+    "css": [
+      "key-image",
+      "icon-selector-image-base",
+      "icon-selector-image-key"
+    ],
+    "bounds": [
+      192.0,
+      164.0,
+      175.0,
+      175.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Click to change",
+    "css": [
+      "icon-selector-hint-label-hidden"
+    ],
+    "bounds": [
+      218.0,
+      241.0,
+      122.0,
+      20.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+ImageEditor+ImageEditor",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      4.0,
+      439.0,
+      552.0,
+      54.0
+    ]
+  },
+  {
+    "type": "AdwClamp",
+    "title": null,
+    "css": [],
+    "bounds": [
+      4.0,
+      439.0,
+      552.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical",
+      "medium"
+    ],
+    "bounds": [
+      22.0,
+      439.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+ImageEditor+ImageGroup",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      439.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      439.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      439.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkListBox",
+    "title": null,
+    "css": [
+      "boxed-list"
+    ],
+    "bounds": [
+      22.0,
+      439.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+ImageEditor+Layout",
+    "title": "Layout",
+    "css": [
+      "expander"
+    ],
+    "bounds": [
+      22.0,
+      439.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      439.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkListBox",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      439.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "AdwActionRow",
+    "title": "Layout",
+    "css": [
+      "activatable",
+      "header"
+    ],
+    "bounds": [
+      22.0,
+      439.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "header",
+      "horizontal"
+    ],
+    "bounds": [
+      36.0,
+      441.0,
+      488.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "title",
+      "vertical"
+    ],
+    "bounds": [
+      36.0,
+      448.0,
+      463.0,
+      36.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Layout",
+    "css": [
+      "title"
+    ],
+    "bounds": [
+      36.0,
+      448.0,
+      463.0,
+      18.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Layout for this key",
+    "css": [
+      "subtitle"
+    ],
+    "bounds": [
+      36.0,
+      469.0,
+      463.0,
+      15.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal",
+      "suffixes"
+    ],
+    "bounds": [
+      505.0,
+      441.0,
+      19.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "expander-row-arrow"
+    ],
+    "bounds": [
+      508.0,
+      441.0,
+      16.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkRevealer",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      493.0,
+      516.0,
+      0.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+BackgroundEditor+BackgroundEditor",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      4.0,
+      518.0,
+      552.0,
+      54.0
+    ]
+  },
+  {
+    "type": "AdwClamp",
+    "title": null,
+    "css": [],
+    "bounds": [
+      4.0,
+      518.0,
+      552.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical",
+      "medium"
+    ],
+    "bounds": [
+      22.0,
+      518.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+BackgroundEditor+BackgroundGroup",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      518.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      518.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      518.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkListBox",
+    "title": null,
+    "css": [
+      "boxed-list"
+    ],
+    "bounds": [
+      22.0,
+      518.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+BackgroundEditor+BackgroundExpanderRow",
+    "title": "Background",
+    "css": [
+      "expander"
+    ],
+    "bounds": [
+      22.0,
+      518.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      518.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkListBox",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      518.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "AdwActionRow",
+    "title": "Background",
+    "css": [
+      "activatable",
+      "header"
+    ],
+    "bounds": [
+      22.0,
+      518.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "header",
+      "horizontal"
+    ],
+    "bounds": [
+      36.0,
+      520.0,
+      488.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "title",
+      "vertical"
+    ],
+    "bounds": [
+      36.0,
+      527.0,
+      463.0,
+      36.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Background",
+    "css": [
+      "title"
+    ],
+    "bounds": [
+      36.0,
+      527.0,
+      463.0,
+      18.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Background for this key",
+    "css": [
+      "subtitle"
+    ],
+    "bounds": [
+      36.0,
+      548.0,
+      463.0,
+      15.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal",
+      "suffixes"
+    ],
+    "bounds": [
+      505.0,
+      520.0,
+      19.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "expander-row-arrow"
+    ],
+    "bounds": [
+      508.0,
+      520.0,
+      16.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkRevealer",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      572.0,
+      516.0,
+      0.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+LabelEditor+LabelEditor",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      4.0,
+      597.0,
+      552.0,
+      54.0
+    ]
+  },
+  {
+    "type": "AdwClamp",
+    "title": null,
+    "css": [],
+    "bounds": [
+      4.0,
+      597.0,
+      552.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical",
+      "medium"
+    ],
+    "bounds": [
+      22.0,
+      597.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+LabelEditor+LabelGroup",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      597.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      597.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      597.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkListBox",
+    "title": null,
+    "css": [
+      "boxed-list"
+    ],
+    "bounds": [
+      22.0,
+      597.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+LabelEditor+LabelExpanderRow",
+    "title": "Labels",
+    "css": [
+      "expander"
+    ],
+    "bounds": [
+      22.0,
+      597.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      597.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkListBox",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      597.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "AdwActionRow",
+    "title": "Labels",
+    "css": [
+      "activatable",
+      "header"
+    ],
+    "bounds": [
+      22.0,
+      597.0,
+      516.0,
+      54.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "header",
+      "horizontal"
+    ],
+    "bounds": [
+      36.0,
+      599.0,
+      488.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "title",
+      "vertical"
+    ],
+    "bounds": [
+      36.0,
+      606.0,
+      463.0,
+      36.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Labels",
+    "css": [
+      "title"
+    ],
+    "bounds": [
+      36.0,
+      606.0,
+      463.0,
+      18.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Labels for this key",
+    "css": [
+      "subtitle"
+    ],
+    "bounds": [
+      36.0,
+      627.0,
+      463.0,
+      15.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal",
+      "suffixes"
+    ],
+    "bounds": [
+      505.0,
+      599.0,
+      19.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "expander-row-arrow"
+    ],
+    "bounds": [
+      508.0,
+      599.0,
+      16.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkRevealer",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      651.0,
+      516.0,
+      0.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+ActionManager+ActionManager",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      4.0,
+      676.0,
+      552.0,
+      214.0
+    ]
+  },
+  {
+    "type": "AdwClamp",
+    "title": null,
+    "css": [],
+    "bounds": [
+      4.0,
+      676.0,
+      552.0,
+      214.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical",
+      "medium"
+    ],
+    "bounds": [
+      22.0,
+      676.0,
+      516.0,
+      164.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+ActionManager+ActionGroup",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      676.0,
+      516.0,
+      164.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      676.0,
+      516.0,
+      164.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      676.0,
+      516.0,
+      164.0
+    ]
+  },
+  {
+    "type": "GtkListBox",
+    "title": null,
+    "css": [
+      "boxed-list"
+    ],
+    "bounds": [
+      22.0,
+      676.0,
+      516.0,
+      164.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+ActionManager+ActionExpanderRow",
+    "title": "Actions",
+    "css": [
+      "expander"
+    ],
+    "bounds": [
+      22.0,
+      676.0,
+      516.0,
+      164.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      22.0,
+      676.0,
+      516.0,
+      164.0
+    ]
+  },
+  {
+    "type": "GtkListBox",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      676.0,
+      516.0,
+      55.0
+    ]
+  },
+  {
+    "type": "AdwActionRow",
+    "title": "Actions",
+    "css": [
+      "activatable",
+      "header"
+    ],
+    "bounds": [
+      22.0,
+      676.0,
+      516.0,
+      55.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "header",
+      "horizontal"
+    ],
+    "bounds": [
+      36.0,
+      678.0,
+      488.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "title",
+      "vertical"
+    ],
+    "bounds": [
+      36.0,
+      685.0,
+      463.0,
+      36.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Actions",
+    "css": [
+      "title"
+    ],
+    "bounds": [
+      36.0,
+      685.0,
+      463.0,
+      18.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Actions for this key",
+    "css": [
+      "subtitle"
+    ],
+    "bounds": [
+      36.0,
+      706.0,
+      463.0,
+      15.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal",
+      "suffixes"
+    ],
+    "bounds": [
+      505.0,
+      678.0,
+      19.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "expander-row-arrow"
+    ],
+    "bounds": [
+      508.0,
+      678.0,
+      16.0,
+      50.0
+    ]
+  },
+  {
+    "type": "GtkRevealer",
+    "title": null,
+    "css": [],
+    "bounds": [
+      22.0,
+      731.0,
+      516.0,
+      109.0
+    ]
+  },
+  {
+    "type": "GtkListBox",
+    "title": null,
+    "css": [
+      "nested"
+    ],
+    "bounds": [
+      22.0,
+      731.0,
+      516.0,
+      109.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+ActionManager+ActionRow",
+    "title": "",
+    "css": [
+      "activatable",
+      "no-padding"
+    ],
+    "bounds": [
+      22.0,
+      731.0,
+      516.0,
+      65.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      37.0,
+      746.0,
+      486.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "linked"
+    ],
+    "bounds": [
+      37.0,
+      746.0,
+      112.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "blue-toggle-button",
+      "image-button"
+    ],
+    "bounds": [
+      37.0,
+      746.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      42.0,
+      755.0,
+      24.0,
+      16.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "blue-toggle-button",
+      "image-button"
+    ],
+    "bounds": [
+      70.0,
+      746.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      75.0,
+      755.0,
+      24.0,
+      16.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+Sidebar+elements+ActionManager+ActionRowLabelToggle",
+    "title": null,
+    "css": [
+      "blue-toggle-button"
+    ],
+    "bounds": [
+      103.0,
+      746.0,
+      46.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      113.0,
+      751.0,
+      26.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      113.0,
+      751.0,
+      16.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      134.0,
+      752.0,
+      5.0,
+      21.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "action-row-label-toggle-inactive"
+    ],
+    "bounds": [
+      134.0,
+      752.0,
+      5.0,
+      5.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "action-row-label-toggle-active"
+    ],
+    "bounds": [
+      134.0,
+      760.0,
+      5.0,
+      5.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "action-row-label-toggle-inactive"
+    ],
+    "bounds": [
+      134.0,
+      768.0,
+      5.0,
+      5.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      164.0,
+      754.0,
+      292.0,
+      18.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      164.0,
+      754.0,
+      292.0,
+      18.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "<b>CPU Usage</b> <span color=\"#979797\">(OS)</span>",
+    "css": [],
+    "bounds": [
+      164.0,
+      754.0,
+      116.0,
+      18.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "linked"
+    ],
+    "bounds": [
+      456.0,
+      746.0,
+      67.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button"
+    ],
+    "bounds": [
+      456.0,
+      746.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      461.0,
+      755.0,
+      24.0,
+      16.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button"
+    ],
+    "bounds": [
+      489.0,
+      746.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      494.0,
+      755.0,
+      24.0,
+      16.0
+    ]
+  },
+  {
+    "type": "AdwButtonRow",
+    "title": "Add Action",
+    "css": [
+      "activatable",
+      "add-action-button",
+      "suggested-action"
+    ],
+    "bounds": [
+      22.0,
+      796.0,
+      516.0,
+      44.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      240.0,
+      798.0,
+      80.0,
+      40.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Add Action",
+    "css": [
+      "title"
+    ],
+    "bounds": [
+      240.0,
+      798.0,
+      80.0,
+      40.0
+    ]
+  },
+  {
+    "type": "AdwBin",
+    "title": null,
+    "css": [
+      "content-pane"
+    ],
+    "bounds": [
+      560.0,
+      0.0,
+      840.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwNavigationPage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      0.0,
+      840.0,
+      900.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      560.0,
+      0.0,
+      840.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwHeaderBar",
+    "title": null,
+    "css": [
+      "flat"
+    ],
+    "bounds": [
+      559.0,
+      0.0,
+      842.0,
+      46.0
+    ]
+  },
+  {
+    "type": "GtkWindowHandle",
+    "title": null,
+    "css": [],
+    "bounds": [
+      559.0,
+      0.0,
+      842.0,
+      46.0
+    ]
+  },
+  {
+    "type": "GtkCenterBox",
+    "title": null,
+    "css": [],
+    "bounds": [
+      559.0,
+      0.0,
+      842.0,
+      46.0
+    ]
+  },
+  {
+    "type": "AdwGizmo",
+    "title": null,
+    "css": [],
+    "bounds": [
+      566.0,
+      6.0,
+      152.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal",
+      "start"
+    ],
+    "bounds": [
+      566.0,
+      6.0,
+      146.0,
+      34.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+DeckSettingsButton+DeckSettingsButton",
+    "title": null,
+    "css": [],
+    "bounds": [
+      566.0,
+      6.0,
+      146.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      576.0,
+      11.0,
+      126.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      576.0,
+      11.0,
+      16.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Deck Settings",
+    "css": [],
+    "bounds": [
+      602.0,
+      11.0,
+      100.0,
+      24.0
+    ]
+  },
+  {
+    "type": "AdwBin",
+    "title": null,
+    "css": [],
+    "bounds": [
+      787.0,
+      6.0,
+      387.0,
+      34.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+deckSwitcher+DeckSwitcher",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      787.0,
+      6.0,
+      387.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkStackSwitcher",
+    "title": null,
+    "css": [
+      "linked"
+    ],
+    "bounds": [
+      862.0,
+      6.0,
+      237.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "text-button",
+      "toggle"
+    ],
+    "bounds": [
+      862.0,
+      6.0,
+      237.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Fake Deck 1 (Stream Deck +)",
+    "css": [],
+    "bounds": [
+      873.0,
+      11.0,
+      215.0,
+      24.0
+    ]
+  },
+  {
+    "type": "AdwGizmo",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1240.0,
+      6.0,
+      154.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal",
+      "end"
+    ],
+    "bounds": [
+      1246.0,
+      6.0,
+      148.0,
+      34.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+HeaderHamburgerMenuButton+HeaderHamburgerMenuButton",
+    "title": null,
+    "css": [
+      "popup"
+    ],
+    "bounds": [
+      1246.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "image-button",
+      "toggle"
+    ],
+    "bounds": [
+      1246.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      1255.0,
+      11.0,
+      16.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1255.0,
+      11.0,
+      16.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkWindowControls",
+    "title": null,
+    "css": [
+      "end"
+    ],
+    "bounds": [
+      1286.0,
+      6.0,
+      108.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button",
+      "minimize"
+    ],
+    "bounds": [
+      1286.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1291.0,
+      11.0,
+      24.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button",
+      "maximize"
+    ],
+    "bounds": [
+      1323.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1328.0,
+      11.0,
+      24.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "close",
+      "image-button"
+    ],
+    "bounds": [
+      1360.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1365.0,
+      11.0,
+      24.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      46.0,
+      840.0,
+      854.0
+    ]
+  },
+  {
+    "type": "AdwToastOverlay",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      46.0,
+      840.0,
+      854.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      560.0,
+      46.0,
+      840.0,
+      854.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+leftArea+LeftArea",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      844.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+DeckStack+DeckStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      844.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+DeckStackChild+DeckStackChild",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      844.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      844.0
+    ]
+  },
+  {
+    "type": "AdwBanner",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      0.0
+    ]
+  },
+  {
+    "type": "GtkRevealer",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      0.0
+    ]
+  },
+  {
+    "type": "GtkStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      844.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+PageSettingsPage+PageSettingsPage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      844.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      844.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      560.0,
+      46.0,
+      837.0,
+      844.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+DeckConfig+DeckConfig",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      773.0,
+      279.0,
+      410.0,
+      377.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+KeyGrid+KeyGrid",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      773.0,
+      279.0,
+      410.0,
+      202.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+KeyGrid+KeyButton",
+    "title": null,
+    "css": [
+      "key-button-frame"
+    ],
+    "bounds": [
+      779.0,
+      285.0,
+      91.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "key-image",
+      "key-button"
+    ],
+    "bounds": [
+      786.0,
+      292.0,
+      77.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+KeyGrid+KeyButton",
+    "title": null,
+    "css": [
+      "key-button-frame-hidden"
+    ],
+    "bounds": [
+      779.0,
+      386.0,
+      91.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "key-image",
+      "key-button"
+    ],
+    "bounds": [
+      786.0,
+      393.0,
+      77.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+KeyGrid+KeyButton",
+    "title": null,
+    "css": [
+      "key-button-frame-hidden"
+    ],
+    "bounds": [
+      882.0,
+      285.0,
+      91.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "key-image",
+      "key-button"
+    ],
+    "bounds": [
+      889.0,
+      292.0,
+      77.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+KeyGrid+KeyButton",
+    "title": null,
+    "css": [
+      "key-button-frame-hidden"
+    ],
+    "bounds": [
+      882.0,
+      386.0,
+      91.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "key-image",
+      "key-button"
+    ],
+    "bounds": [
+      889.0,
+      393.0,
+      77.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+KeyGrid+KeyButton",
+    "title": null,
+    "css": [
+      "key-button-frame-hidden"
+    ],
+    "bounds": [
+      985.0,
+      285.0,
+      90.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "key-image",
+      "key-button"
+    ],
+    "bounds": [
+      992.0,
+      292.0,
+      76.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+KeyGrid+KeyButton",
+    "title": null,
+    "css": [
+      "key-button-frame-hidden"
+    ],
+    "bounds": [
+      985.0,
+      386.0,
+      90.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "key-image",
+      "key-button"
+    ],
+    "bounds": [
+      992.0,
+      393.0,
+      76.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+KeyGrid+KeyButton",
+    "title": null,
+    "css": [
+      "key-button-frame-hidden"
+    ],
+    "bounds": [
+      1087.0,
+      285.0,
+      90.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "key-image",
+      "key-button"
+    ],
+    "bounds": [
+      1094.0,
+      292.0,
+      76.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+elements+KeyGrid+KeyButton",
+    "title": null,
+    "css": [
+      "key-button-frame-hidden"
+    ],
+    "bounds": [
+      1087.0,
+      386.0,
+      90.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "key-image",
+      "key-button"
+    ],
+    "bounds": [
+      1094.0,
+      393.0,
+      76.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+DeckPlus+ScreenBar+ScreenBar",
+    "title": null,
+    "css": [
+      "key-button-frame-hidden"
+    ],
+    "bounds": [
+      779.0,
+      487.0,
+      398.0,
+      62.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+DeckPlus+ScreenBar+ScreenBarImage",
+    "title": null,
+    "css": [
+      "plus-screenbar-image"
+    ],
+    "bounds": [
+      786.0,
+      494.0,
+      384.0,
+      48.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+DeckPlus+DialBox+DialBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      773.0,
+      555.0,
+      410.0,
+      101.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+DeckPlus+DialBox+Dial",
+    "title": null,
+    "css": [
+      "dial-frame",
+      "dial-frame-hidden"
+    ],
+    "bounds": [
+      780.0,
+      561.0,
+      89.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "dial"
+    ],
+    "bounds": [
+      787.0,
+      568.0,
+      75.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+DeckPlus+DialBox+Dial",
+    "title": null,
+    "css": [
+      "dial-frame",
+      "dial-frame-hidden"
+    ],
+    "bounds": [
+      883.0,
+      561.0,
+      89.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "dial"
+    ],
+    "bounds": [
+      890.0,
+      568.0,
+      75.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+DeckPlus+DialBox+Dial",
+    "title": null,
+    "css": [
+      "dial-frame",
+      "dial-frame-hidden"
+    ],
+    "bounds": [
+      985.0,
+      561.0,
+      89.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "dial"
+    ],
+    "bounds": [
+      992.0,
+      568.0,
+      75.0,
+      75.0
+    ]
+  },
+  {
+    "type": "src+windows+mainWindow+DeckPlus+DialBox+Dial",
+    "title": null,
+    "css": [
+      "dial-frame",
+      "dial-frame-hidden"
+    ],
+    "bounds": [
+      1087.0,
+      561.0,
+      89.0,
+      89.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [
+      "dial"
+    ],
+    "bounds": [
+      1094.0,
+      568.0,
+      75.0,
+      75.0
+    ]
+  }
+]

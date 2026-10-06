@@ -1,0 +1,170 @@
+[
+  {
+    "app": "original",
+    "workload": "graphs",
+    "trial": 1,
+    "cpu_accounting": "cgroup-v2 cpu.stat usage_usec; all threads and descendants, including exited tasks",
+    "cpu_percent": 12.320795385341725,
+    "pss_mib": 978.296875,
+    "rss_mib": 1553.34375,
+    "samples": [
+      {
+        "elapsed": 1.0120691090123728,
+        "cpu_percent": 11.480046072484116,
+        "pss_mib": 966.662109375,
+        "rss_mib": 1541.68359375,
+        "processes": 9,
+        "threads": 49,
+        "cpu_seconds": 4.380327
+      },
+      {
+        "elapsed": 2.023788505990524,
+        "cpu_percent": 11.50763742869248,
+        "pss_mib": 981.80078125,
+        "rss_mib": 1556.828125,
+        "processes": 9,
+        "threads": 49,
+        "cpu_seconds": 4.496752
+      },
+      {
+        "elapsed": 3.0354754110157955,
+        "cpu_percent": 13.291661613099686,
+        "pss_mib": 987.375,
+        "rss_mib": 1562.359375,
+        "processes": 9,
+        "threads": 49,
+        "cpu_seconds": 4.631222
+      },
+      {
+        "elapsed": 4.047424352989765,
+        "cpu_percent": 13.114594471646146,
+        "pss_mib": 978.2548828125,
+        "rss_mib": 1553.23828125,
+        "processes": 9,
+        "threads": 49,
+        "cpu_seconds": 4.763935
+      },
+      {
+        "elapsed": 5.011738127999706,
+        "cpu_percent": 12.20474113820334,
+        "pss_mib": 978.296875,
+        "rss_mib": 1553.34375,
+        "processes": 9,
+        "threads": 49,
+        "cpu_seconds": 4.881627
+      }
+    ]
+  },
+  {
+    "app": "direct",
+    "workload": "graphs",
+    "trial": 1,
+    "cpu_accounting": "cgroup-v2 cpu.stat usage_usec; all threads and descendants, including exited tasks",
+    "cpu_percent": 16.298547329618966,
+    "pss_mib": 629.7109375,
+    "rss_mib": 1416.07421875,
+    "samples": [
+      {
+        "elapsed": 1.00956651600427,
+        "cpu_percent": 16.05491044230658,
+        "pss_mib": 609.435546875,
+        "rss_mib": 1395.8515625,
+        "processes": 9,
+        "threads": 63,
+        "cpu_seconds": 5.133587
+      },
+      {
+        "elapsed": 2.0190215919865295,
+        "cpu_percent": 16.24203036875721,
+        "pss_mib": 622.248046875,
+        "rss_mib": 1408.625,
+        "processes": 9,
+        "threads": 63,
+        "cpu_seconds": 5.297543
+      },
+      {
+        "elapsed": 3.0292929940042086,
+        "cpu_percent": 16.20317071957811,
+        "pss_mib": 629.7109375,
+        "rss_mib": 1416.07421875,
+        "processes": 9,
+        "threads": 63,
+        "cpu_seconds": 5.461239
+      },
+      {
+        "elapsed": 4.03922967100516,
+        "cpu_percent": 16.211709479271214,
+        "pss_mib": 636.5380859375,
+        "rss_mib": 1422.94140625,
+        "processes": 9,
+        "threads": 63,
+        "cpu_seconds": 5.624967
+      },
+      {
+        "elapsed": 5.00971640899661,
+        "cpu_percent": 16.80043565947594,
+        "pss_mib": 647.671875,
+        "rss_mib": 1434.0234375,
+        "processes": 9,
+        "threads": 63,
+        "cpu_seconds": 5.788013
+      }
+    ]
+  },
+  {
+    "app": "rust",
+    "workload": "graphs",
+    "trial": 1,
+    "cpu_accounting": "cgroup-v2 cpu.stat usage_usec; all threads and descendants, including exited tasks",
+    "cpu_percent": 2.447868549947088,
+    "pss_mib": 214.919921875,
+    "rss_mib": 257.21484375,
+    "samples": [
+      {
+        "elapsed": 1.0023384199885186,
+        "cpu_percent": 0.8502118476210395,
+        "pss_mib": 206.783203125,
+        "rss_mib": 249.078125,
+        "processes": 1,
+        "threads": 30,
+        "cpu_seconds": 0.736285
+      },
+      {
+        "elapsed": 2.004523028997937,
+        "cpu_percent": 8.792192497058386,
+        "pss_mib": 214.919921875,
+        "rss_mib": 257.21484375,
+        "processes": 1,
+        "threads": 30,
+        "cpu_seconds": 0.824399
+      },
+      {
+        "elapsed": 3.006616856000619,
+        "cpu_percent": 0.86588698245487,
+        "pss_mib": 214.919921875,
+        "rss_mib": 257.21484375,
+        "processes": 1,
+        "threads": 30,
+        "cpu_seconds": 0.833076
+      },
+      {
+        "elapsed": 4.008828247984638,
+        "cpu_percent": 0.8378471914370218,
+        "pss_mib": 215.9208984375,
+        "rss_mib": 258.21484375,
+        "processes": 1,
+        "threads": 30,
+        "cpu_seconds": 0.841473
+      },
+      {
+        "elapsed": 5.002106833009748,
+        "cpu_percent": 0.8794108854948406,
+        "pss_mib": 216.0498046875,
+        "rss_mib": 258.34375,
+        "processes": 1,
+        "threads": 30,
+        "cpu_seconds": 0.850208
+      }
+    ]
+  }
+]

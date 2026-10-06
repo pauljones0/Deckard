@@ -1,10 +1,13 @@
 # Performance results
 
+**Audit correction:** the tables below are archived measurements of narrow fake-device fixtures, not validated general speedup claims. Their process-tree CPU sampler was checked against kernel accounting: it includes short-lived threads, but can miss detached descendants. The original animated comparison loaded no plugins and did not exercise overlapping callbacks or sustained input events. New timing uses isolated cgroup-v2 counters. See [the audit](performance-audit.md).
+
+
 ## Direct-upstream GTK layout · Rust 0.10.0
 
 Final application source `2bd27218`; host release SHA-256 `b5032a0c8a734914c41cdff6c968ba68173f39baa75bc78c098dbc15dc9f2dae`. The README image is a new capture of this executable. The editor, engine and common-plugin replacements run without Python; GTK/libadwaita are system libraries.
 
-**Eight animated Plus keys: 52% less editor CPU and 31% less RAM than the direct upstream.**
+Archived plugin-free fixture; the README speedup claim has been withdrawn.
 
 | 10 FPS source · CPU / PSS | StreamController | nazbert/Deckard | Rust GTK 0.10.0 |
 | --- | ---: | ---: | ---: |

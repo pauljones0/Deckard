@@ -1,0 +1,177 @@
+{
+  "scope": "real applications, fake Plus, four CPU/four RAM actions, visible editor; defaults retained; live input values and graph pixels are not identical",
+  "timings": [
+    {
+      "workload": "monitoring",
+      "apps": {
+        "original": {
+          "cpu_percent": {
+            "median": 0.6759786645346542,
+            "range": [
+              0.5671213040293481,
+              0.7601684419535996
+            ]
+          },
+          "pss_mib": {
+            "median": 321.3828125,
+            "range": [
+              320.423828125,
+              322.09228515625
+            ]
+          }
+        },
+        "direct": {
+          "cpu_percent": {
+            "median": 0.5190552700682819,
+            "range": [
+              0.3252390273160694,
+              0.7208721841266674
+            ]
+          },
+          "pss_mib": {
+            "median": 304.509765625,
+            "range": [
+              303.10791015625,
+              306.99658203125
+            ]
+          }
+        },
+        "rust": {
+          "cpu_percent": {
+            "median": 0.5802128918475041,
+            "range": [
+              0.2429746116777912,
+              0.8998757932623833
+            ]
+          },
+          "pss_mib": {
+            "median": 203.517578125,
+            "range": [
+              203.33984375,
+              207.4365234375
+            ]
+          }
+        }
+      }
+    },
+    {
+      "workload": "graphs",
+      "apps": {
+        "original": {
+          "cpu_percent": {
+            "median": 12.047858262459856,
+            "range": [
+              11.932448821810809,
+              12.114547054816757
+            ]
+          },
+          "pss_mib": {
+            "median": 992.7294921875,
+            "range": [
+              982.5224609375,
+              993.57568359375
+            ]
+          }
+        },
+        "direct": {
+          "cpu_percent": {
+            "median": 17.252708755972215,
+            "range": [
+              17.10345055022655,
+              17.829699002208017
+            ]
+          },
+          "pss_mib": {
+            "median": 800.13330078125,
+            "range": [
+              795.74169921875,
+              806.0205078125
+            ]
+          }
+        },
+        "rust": {
+          "cpu_percent": {
+            "median": 0.9859181315636524,
+            "range": [
+              0.6636200422711688,
+              1.048706918761593
+            ]
+          },
+          "pss_mib": {
+            "median": 210.4541015625,
+            "range": [
+              206.96533203125,
+              212.8896484375
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "diagnostic_cpu_attribution": [
+    {
+      "app": "original",
+      "cgroup_cpu_percent": 12.189069596882376,
+      "application_cpu_percent": 2.33247979811634,
+      "children_cpu_percent": 9.863057432034813
+    },
+    {
+      "app": "direct",
+      "cgroup_cpu_percent": 17.87751673033741,
+      "application_cpu_percent": 6.764285492965414,
+      "children_cpu_percent": 10.996129126495502
+    },
+    {
+      "app": "rust",
+      "cgroup_cpu_percent": 0.9984636155317146,
+      "application_cpu_percent": 0.9999201659067184,
+      "children_cpu_percent": 0.0
+    }
+  ],
+  "diagnostic_plugin_sampling": [
+    {
+      "app": "original",
+      "readings": 116,
+      "zero_readings": 26,
+      "new_ident_first_readings": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        100.0,
+        0.0,
+        0.0,
+        100.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        100.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "median_interval_per_ident_seconds": 5.000207220989978
+    },
+    {
+      "app": "direct",
+      "readings": 116,
+      "zero_readings": 0,
+      "new_ident_first_readings": [],
+      "median_interval_per_ident_seconds": 1.001601826006663
+    }
+  ]
+}

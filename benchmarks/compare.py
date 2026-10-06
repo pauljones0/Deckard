@@ -4,9 +4,10 @@ Requires psutil, Pillow, a managed X11 display, git-exported upstream sources,
 and the upstream runtime dependencies. Never measures failed application startup.
 """
 
-import argparse, hashlib, json, os, pathlib, platform, signal, socket, statistics, subprocess, time
+import argparse, hashlib, json, os, pathlib, platform, signal, shutil, socket, statistics, subprocess, time
 import psutil
 from PIL import Image, ImageDraw
+from accounting import CpuAccounting
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SHAS = {
@@ -83,7 +84,24 @@ def validate_native_animation(data, output):
     )
 
 
-def prepare(data, animation, workload):
+def validate_native_live(data, output):
+    before = native_status(data)
+    time.sleep(5)
+    after = native_status(data)
+    assert not before['errors'] and not after['errors']
+    first, last = before['devices'][0], after['devices'][0]
+    tiles = last['frame_tiles']
+    assert len(tiles) == 8 and all([t['width'], t['height']] == [120, 120] for t in tiles)
+    assert all(last['tile_updates'].get(str(t['key']), 0) > 0 for t in tiles)
+    output.write_text(json.dumps({'instrumented': True, 'purpose': 'live frame validation only',
+                                  'dimensions': {str(t['key']): [t['width'], t['height']] for t in tiles},
+                                  'changed_tiles': {str(t['key']): last['tile_updates'].get(str(t['key']), 0)
+                                                    - first['tile_updates'].get(str(t['key']), 0) for t in tiles},
+                                  'note': 'Unchanged rounded readouts and flat graphs may legitimately reuse pixels.',
+                                  'errors': after['errors']}, indent=2) + '\n')
+
+
+def prepare(data, animation, workload, implementation=None):
     (data / "settings/decks").mkdir(parents=True, exist_ok=True)
     (data / "pages").mkdir(exist_ok=True)
     (data / ".skip-onboarding").touch()
@@ -96,7 +114,7 @@ def prepare(data, animation, workload):
                 "labels": {
                     "center": {
                         "text": f"Key {y * 4 + x + 1}",
-                        "font-family": "DejaVu Sans",
+                        "font-family": "Liberation Sans",
                         "font-size": 14,
                         "color": [255, 255, 255, 255],
                     }
@@ -104,6 +122,18 @@ def prepare(data, animation, workload):
             }
             if workload == "animated":
                 state["media"] = {"path": str(animation), "fps": 10, "loop": True}
+            if workload in ("monitoring", "graphs"):
+                metric = "CPU" if x < 2 else "RAM"
+                if workload == "graphs":
+                    metric += "_Graph"
+                state["labels"] = {"center": {"font-family": "Liberation Sans", "font-size": 24},
+                                   "bottom": {"text": metric.replace('_', ' '), "font-size": 12,
+                                              "font-family": "Liberation Sans"}}
+                state["image-control-action"] = 0
+                state["label-control-actions"] = [None, 0, None]
+                state["actions"] = [{"id": f"native::OSPlugin-{metric}" if implementation == "rust"
+                                     else f"com_core447_OSPlugin::{metric}",
+                                     "event": "auto", "settings": {}, "comment": ""}]
             page["keys"][f"{x}x{y}"] = {"states": {"0": state}}
     values = {
         "settings/settings.json": {
@@ -128,6 +158,8 @@ def prepare(data, animation, workload):
     }
     for name, value in values.items():
         (data / name).write_text(json.dumps(value))
+    if workload in ("monitoring", "graphs") and implementation != "rust":
+        shutil.copytree(ROOT / "target/benchmarks/OSPlugin", data / "plugins/com_core447_OSPlugin")
 
 
 def stop(process):
@@ -141,6 +173,7 @@ def stop(process):
 
 
 def snapshot(root):
+    """Historical sampler retained ONLY for accounting regression diagnostics."""
     processes = [root] + root.children(recursive=True)
     cpu = {}
     pss = 0
@@ -158,6 +191,36 @@ def snapshot(root):
         except (psutil.NoSuchProcess, psutil.ZombieProcess):
             pass
     return cpu, pss / 2**20, rss / 2**20, len(cpu)
+
+
+def memory_snapshot(root, accounting=None):
+    pss = rss = count = threads = 0
+    processes = accounting.processes() if accounting else [root.pid] + [p.pid for p in root.children(recursive=True)]
+    for pid in processes:
+        try:
+            process = psutil.Process(pid)
+            if process.status() == psutil.STATUS_ZOMBIE:
+                continue
+            memory = process.memory_full_info()
+            pss += memory.pss
+            rss += memory.rss
+            threads += process.num_threads()
+            count += 1
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            pass
+    return pss / 2**20, rss / 2**20, count, threads
+
+
+def process_cpu_snapshot(accounting):
+    result = {}
+    for pid in accounting.processes():
+        try:
+            p = psutil.Process(pid)
+            times = p.cpu_times()
+            result[str(pid)] = {"created": p.create_time(), "seconds": times.user + times.system}
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            pass
+    return result
 
 
 def start_compositor(args, name):
@@ -227,6 +290,10 @@ def main():
         help="All applications launched with -b; deck rendering remains active",
     )
     parser.add_argument("--output", type=pathlib.Path, required=True)
+    parser.add_argument("--cgroup-parent", type=pathlib.Path)
+    parser.add_argument("--observe-threads", action="store_true", help="Diagnostic only; excludes timings from performance claims")
+    parser.add_argument("--observe-process-cpu", action="store_true", help="Diagnostic only: attribute CPU to the app and live child processes")
+    parser.add_argument("--slow-tick-seconds", type=float, default=0, help="Diagnostic ONLY: delay actual OS CPU/RAM tick callbacks")
     parser.add_argument(
         "--apps",
         nargs="+",
@@ -236,7 +303,7 @@ def main():
     parser.add_argument(
         "--workloads",
         nargs="+",
-        choices=["static", "animated"],
+        choices=["static", "animated", "monitoring", "graphs"],
         default=["static", "animated"],
     )
     parser.add_argument("--trials", type=int, default=3)
@@ -251,6 +318,10 @@ def main():
     parser.add_argument("--weston-bundle", type=pathlib.Path, help="Extracted Weston package; start a fresh private GPU compositor for each trial")
     parser.add_argument("--display", default=":98")
     args = parser.parse_args()
+    if args.slow_tick_seconds and (not args.observe_threads or args.observe_legacy_frames):
+        parser.error("--slow-tick-seconds requires --observe-threads without a frame observer")
+    if args.observe_threads and args.observe_legacy_frames:
+        parser.error("thread and frame diagnostics must run separately")
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
     if len(str(args.output / "rust-animated-999/native-control.sock").encode()) >= 100:
@@ -272,6 +343,8 @@ def main():
         "native_renderer_override": os.environ.get("DECKARD_RENDERER"),
         "wgpu_backend_override": os.environ.get("WGPU_BACKEND"),
         "native_sha256": hashlib.sha256(args.native.read_bytes()).hexdigest(),
+        "driver_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
+        "accounting_sha256": hashlib.sha256((ROOT / 'benchmarks/accounting.py').read_bytes()).hexdigest(),
         "git_head": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
@@ -284,10 +357,11 @@ def main():
         "sample_seconds": args.duration,
         "trials": args.trials,
         "units": {
-            "cpu_percent": "100% = one logical CPU, sum of app and descendants; including waited child CPU; Linux process accounting at 10 ms resolution",
+            "cpu_percent": "100% = one logical CPU; " + CpuAccounting.method,
             "memory_mib": "PSS sums app and descendants, 1 MiB = 1048576 bytes",
         },
-        "instrumented": args.observe_legacy_frames,
+        "instrumented": args.observe_legacy_frames or args.observe_threads or args.observe_process_cpu,
+        "slow_tick_seconds": args.slow_tick_seconds,
         "background": args.background,
         "fresh_compositor_per_trial": bool(args.weston_bundle),
         "wayland_runtime": str(args.wayland_runtime) if args.wayland_runtime else None,
@@ -296,7 +370,8 @@ def main():
             if args.wayland_runtime
             else "X11, 1280x800 Xvfb + Openbox, software OpenGL"
         )
-        + ", one fake Plus, 8 labelled keys, no plugins, no hardware USB",
+        + ", one fake Plus, 8 labelled keys; monitoring/graphs use OSPlugin or its native replacement; no hardware USB",
+        "requested_font": "Liberation Sans",
     }
     subprocess.run(
         [args.python, "-m", "pip", "freeze"],
@@ -325,7 +400,7 @@ def main():
             for app in order:
                 name = f"{app}-{workload}-{trial + 1}"
                 data = args.output / name
-                prepare(data, animation, workload)
+                prepare(data, animation, workload, app)
                 home = data / "home"
                 home.mkdir(exist_ok=True)
                 config = args.output / "session.conf"
@@ -398,15 +473,20 @@ def main():
                         str(args.output / f"{name}-frames.json"),
                         *command[2:],
                     ]
+                if args.observe_threads and app != "rust":
+                    command = [args.python, str(ROOT / "benchmarks/observe_threads.py"),
+                               str(getattr(args, app)), str(args.output / f"{name}-threads.json"),
+                               str(args.slow_tick_seconds), *command[2:]]
                 if args.background:
                     command.append("-b")
                 if app == "direct":
                     command.extend(["--fake-deck-model", "plus"])
                 print(f"Starting {name}", flush=True)
                 compositor = start_compositor(args, name)
+                accounting = CpuAccounting(args.cgroup_parent)
                 log_path = args.output / f"{name}.log"
                 process = subprocess.Popen(
-                    command,
+                    accounting.command(command),
                     cwd=ROOT if app == "rust" else getattr(args, app),
                     env=env,
                     stdout=log_path.open("w"),
@@ -433,6 +513,8 @@ def main():
                             validate_native_animation(
                                 data, args.output / f"{name}-frames.json"
                             )
+                        elif args.observe_legacy_frames and workload in ('monitoring', 'graphs'):
+                            validate_native_live(data, args.output / f'{name}-frames.json')
                     else:
                         log = log_path.read_text()
                         if (
@@ -442,8 +524,15 @@ def main():
                             raise RuntimeError(f"{name} has not loaded its page/GUI")
                         if "Error in media player tick" in log:
                             raise RuntimeError(f"{name} renderer failed")
+                        if workload in ("monitoring", "graphs"):
+                            expected = "CPU Graph" if workload == "graphs" else "CPU Usage"
+                            expected_ram = "Memory Graph" if workload == "graphs" else "Memory Usage"
+                            # Abort if plugin startup fell back to missing-action placeholders.
+                            if log.count(f"Loaded action {expected} with id") != 4 or log.count(f"Loaded action {expected_ram} with id") != 4:
+                                raise RuntimeError(f"{name} did not load all eight monitoring actions; inspect {log_path}")
                     root = psutil.Process(process.pid)
-                    previous, _, _, _ = snapshot(root)
+                    process_cpu_before = process_cpu_snapshot(accounting) if args.observe_process_cpu else None
+                    previous = accounting.read()
                     last = time.monotonic()
                     start = last
                     accumulated = 0
@@ -452,9 +541,12 @@ def main():
                         time.sleep(min(1, args.duration - (time.monotonic() - start)))
                         if process.poll() is not None:
                             raise RuntimeError(f"{name} died during sample")
-                        current, pss, rss, count = snapshot(root)
+                        pss, rss, count, threads = memory_snapshot(root, accounting)
+                        current = accounting.read()
                         now = time.monotonic()
-                        delta = max(0, sum(current.values()) - sum(previous.values()))
+                        delta = current - previous
+                        if delta < 0:
+                            raise RuntimeError("kernel CPU counter decreased")
                         accumulated += delta
                         samples.append(
                             {
@@ -463,19 +555,27 @@ def main():
                                 "pss_mib": pss,
                                 "rss_mib": rss,
                                 "processes": count,
+                                "threads": threads,
+                                "cpu_seconds": current,
                             }
                         )
+                        if args.observe_process_cpu:
+                            samples[-1]["process_cpu"] = process_cpu_snapshot(accounting)
                         previous = current
                         last = now
                     result = {
                         "app": app,
                         "workload": workload,
                         "trial": trial + 1,
+                        "cpu_accounting": CpuAccounting.method,
                         "cpu_percent": 100 * accumulated / (last - start),
                         "pss_mib": statistics.median(s["pss_mib"] for s in samples),
                         "rss_mib": statistics.median(s["rss_mib"] for s in samples),
                         "samples": samples,
                     }
+                    if args.observe_process_cpu:
+                        result["application_pid"] = process.pid
+                        result["process_cpu_before"] = process_cpu_before
                     results.append(result)
                     (args.output / "results.json").write_text(
                         json.dumps(results, indent=2)
@@ -490,6 +590,7 @@ def main():
                         # can crash in weston_view_move_to_layer on its final client closing.
                         stop(compositor)
                     stop(process)
+                    accounting.close()
                     stop(bus)
     for workload in args.workloads:
         for app in args.apps:

@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-10-06T22:02:13Z",
+  "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "logical_cpus": 8,
+  "python": "Python 3.13.16",
+  "upstreams": {
+    "original": "0f439967a16a8bfdc859439b0ae2b1370185aa06",
+    "direct": "a3609c7de63347dbc7e031926826898950600c83"
+  },
+  "native_renderer_override": null,
+  "wgpu_backend_override": null,
+  "native_sha256": "b5032a0c8a734914c41cdff6c968ba68173f39baa75bc78c098dbc15dc9f2dae",
+  "git_head": "0d739e753650305c563f8e9378e5c5b4c009ec78",
+  "git_dirty": true,
+  "warmup_seconds": 15.0,
+  "sample_seconds": 45.0,
+  "trials": 1,
+  "units": {
+    "cpu_percent": "100% = one logical CPU; cgroup-v2 cpu.stat usage_usec; all threads and descendants, including exited tasks",
+    "memory_mib": "PSS sums app and descendants, 1 MiB = 1048576 bytes"
+  },
+  "instrumented": true,
+  "slow_tick_seconds": 0,
+  "background": false,
+  "fresh_compositor_per_trial": true,
+  "wayland_runtime": "/tmp/deckard-thread-audit",
+  "rendering": "Wayland, 1280x800 Weston headless EGL, hardware GPU, one fake Plus, 8 labelled keys; monitoring/graphs use OSPlugin or its native replacement; no hardware USB",
+  "requested_font": "Liberation Sans"
+}

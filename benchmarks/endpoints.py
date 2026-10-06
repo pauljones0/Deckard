@@ -2,9 +2,10 @@
 """Native endpoint throughput comparison. Timing excludes the later IPC frame observer."""
 import argparse, hashlib, json, os, pathlib, platform, statistics, subprocess, time
 from types import SimpleNamespace
+from accounting import CpuAccounting
 import psutil
 from PIL import Image, ImageDraw
-from compare import native_status, snapshot, stop, start_compositor
+from compare import native_status, memory_snapshot, stop, start_compositor
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MODELS = {"mini": (2, 3, (80,80)), "mk2": (3,5,(72,72)), "xl": (4,8,(96,96)), "plus": (2,4,(120,120)), "plus-xl": (4,9,(112,112)), "studio": (2,16,(144,112)), "ulanzi": (3,5,(196,196)), "mirabox": (3,6,(85,85))}
@@ -79,6 +80,7 @@ def main():
     parser.add_argument("--versions",nargs="+",choices=["before","after"],default=["before","after"])
     parser.add_argument("--cases",nargs="+",choices=CASES,default=["plus10","plus50","plus100","plus60video","xl50","plusxl50"])
     parser.add_argument("--output",type=pathlib.Path,required=True)
+    parser.add_argument("--cgroup-parent",type=pathlib.Path)
     parser.add_argument("--warmup",type=float,default=15)
     parser.add_argument("--duration",type=float,default=15)
     parser.add_argument("--validate-seconds",type=float,default=4)
@@ -102,7 +104,7 @@ def main():
             for version in versions:
                 name=f"{version}-{case}-{trial+1}"; data=args.output/name; prepare(data,model,assets[case],looping=kind!="video-once",font_family=args.font_family)
                 compositor=start_compositor(args,name) if args.visible else None
-                bus=None; process=None
+                bus=None; process=None; accounting=None
                 try:
                     config=args.output/"session.conf"
                     config.write_text('<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><policy context="default"><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>')
@@ -120,17 +122,20 @@ def main():
                     command=[str(getattr(args,version)),"--skip-load-hardware-decks","--fake-deck-model",{"ulanzi":"ulanzi-d200","mirabox":"mirabox-293s"}.get(model,model),"--data",str(data)]
                     if not args.visible: command.append("-b")
                     with (args.output/f"{name}.log").open("w") as log:
-                        process=subprocess.Popen(command,env=env,stdout=log,stderr=log,start_new_session=True)
+                        accounting=CpuAccounting(args.cgroup_parent)
+                        process=subprocess.Popen(accounting.command(command),env=env,stdout=log,stderr=log,start_new_session=True)
                         time.sleep(args.warmup)
                         if process.poll() is not None: raise RuntimeError(f"{name} failed startup")
                         state=native_status(data)
                         if state["errors"]: raise RuntimeError(state["errors"])
-                        root=psutil.Process(process.pid); previous,_,_,_=snapshot(root); start=time.monotonic(); last=start; accumulated=0; samples=[]
+                        root=psutil.Process(process.pid); previous=accounting.read(); start=time.monotonic(); last=start; accumulated=0; samples=[]
                         while time.monotonic()-start<args.duration:
                             time.sleep(min(1,args.duration-(time.monotonic()-start)))
-                            current,pss,rss,count=snapshot(root); now=time.monotonic(); delta=max(0,sum(current.values())-sum(previous.values())); accumulated+=delta
-                            samples.append({"elapsed":now-start,"cpu_percent":100*delta/(now-last),"pss_mib":pss,"rss_mib":rss,"processes":count}); previous=current;last=now
-                        result={"version":version,"case":case,"model":model,"source_fps":rate,"requested_fps":120,"kind":kind,"trial":trial+1,"cpu_percent":100*accumulated/(last-start),"pss_mib":statistics.median(s["pss_mib"] for s in samples),"samples":samples,"timing_instrumented":False}
+                            pss,rss,count,threads=memory_snapshot(root,accounting); current=accounting.read(); now=time.monotonic(); delta=current-previous
+                            if delta<0: raise RuntimeError("kernel CPU counter decreased")
+                            accumulated+=delta
+                            samples.append({"elapsed":now-start,"cpu_percent":100*delta/(now-last),"pss_mib":pss,"rss_mib":rss,"processes":count,"threads":threads,"cpu_seconds":current}); previous=current;last=now
+                        result={"version":version,"case":case,"model":model,"source_fps":rate,"requested_fps":120,"kind":kind,"trial":trial+1,"cpu_percent":100*accumulated/(last-start),"pss_mib":statistics.median(s["pss_mib"] for s in samples),"samples":samples,"timing_instrumented":False,"cpu_accounting":CpuAccounting.method}
                         # Mapping inspection and frame validation are AFTER CPU/PSS timing.
                         result["memory_mappings"]=[{"path":m.path,"pss_mib":m.pss/2**20} for m in root.memory_maps(grouped=True)]
                         result["validation"]=validate(data,model,args.validate_seconds)
@@ -139,6 +144,7 @@ def main():
                 finally:
                     if compositor is not None: stop(compositor)
                     if process is not None: stop(process)
+                    if accounting is not None: accounting.close()
                     if bus is not None: stop(bus)
     summary=[]
     for case in args.cases:

@@ -2,7 +2,7 @@
 
 Stream Deck controller for Linux. Rust engine. GTK4/libadwaita editor. No Python runtime.
 
-![Rust GTK editor](docs/images/native-editor.png)
+![Rust GTK editor with OS, deck and media actions](docs/images/native-editor.png)
 
 ## Download
 
@@ -29,16 +29,9 @@ Supports Elgato, Mirabox and Ulanzi. [Models](docs/rendering-endpoints.md) · [U
 
 Python plugins use a new native interface. `deckard --migrate-legacy-actions` converts supported saved actions. [Migration](docs/plugin-migration.md) · [Plugin API](docs/native-plugins.md).
 
-## Less CPU. Less RAM.
+## Performance
 
-Eight animated Plus keys, 10 FPS source. **52% less editor CPU and 31% less RAM than the direct upstream.**
-
-| Mode | StreamController CPU / RAM | nazbert/Deckard CPU / RAM | Rust GTK CPU / RAM |
-| --- | ---: | ---: | ---: |
-| Editor | 7.27% / 345 MiB | 3.80% / 311 MiB | **1.83% / 214 MiB** |
-| Daemon only | 4.53% / 203 MiB | 2.50% / 200 MiB | **0.93% / 56 MiB** |
-
-Rust 0.10.0; medians of three trials on a 9800X3D / RTX 5070 under GPU load. CPU is percent of one core; RAM is process-tree PSS. Fake devices; USB/LCD and ARM performance unmeasured. [Method, ranges and 100 FPS results](docs/performance.md).
+The earlier speedup table used plugin-free fake devices and did not test callback buildup. Its broad claims are withdrawn. [Measurement audit and reproducible workloads](docs/performance-audit.md).
 
 ## Build
 

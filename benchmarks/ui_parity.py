@@ -23,7 +23,7 @@ import compare
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ["main", "no-devices", "settings-ui", "settings-performance", "settings-developer",
          "pages", "assets", "assets-icon-packs", "action", "dial", "touchscreen",
-         "labels-detail", "deck-settings", "chooser-populated"]
+         "labels-detail", "deck-settings", "chooser-populated", "showcase", "monitoring", "graphs"]
 
 
 @contextlib.contextmanager
@@ -60,11 +60,12 @@ def private_audio(image):
 
 
 def fixture(directory, case, implementation, python):
-    compare.prepare(directory, directory.parent / "unused.gif", "static")
+    compare.prepare(directory, directory.parent / "unused.gif",
+                    case if case in ("monitoring", "graphs") else "static", implementation)
     page_file = directory / "pages/Bench.json"
     page = json.loads(page_file.read_text())
     for key in page["keys"].values():
-        key["states"]["0"]["labels"]["center"]["font-family"] = "Liberation Sans"
+        key["states"]["0"]["labels"].setdefault("center", {})["font-family"] = "Liberation Sans"
     if case in ("action", "chooser-populated"):
         names = ["OSPlugin"] if case == "action" else [
             "OSPlugin", "DeckPlugin", "MediaPlugin", "OBSPlugin", "VolumeMixer"]
@@ -92,6 +93,45 @@ def fixture(directory, case, implementation, python):
             values.setdefault("dev", {})["n-fake-decks"] = 0
             path.write_text(json.dumps(values))
     page_file.write_text(json.dumps(page))
+    if case == "showcase":
+        # A configured 15-key device, rather than the empty Plus timing fixture.
+        for name in ("OSPlugin", "DeckPlugin", "MediaPlugin"):
+            if implementation == "direct":
+                shutil.copytree(ROOT / "target/benchmarks" / name,
+                                directory / "plugins" / f"com_core447_{name}")
+        entries = [
+            ("Browser", "OSPlugin", "OpenInBrowser", "OSPlugin/web.png", {"url": "https://github.com/pauljones0/Deckard"}),
+            ("Workspace", "DeckPlugin", "ChangePage", "DeckPlugin/folder.png", {"selected_page": str(directory / "pages/Workspace.json")}),
+            ("Type text", "OSPlugin", "WriteText", "OSPlugin/keyboard.png", {"text": "Hello from Deckard"}),
+            ("Terminal", "OSPlugin", "RunCommand", "OSPlugin/terminal.png", {"command": "printf 'Hello Deckard'", "auto_run": 0}),
+            ("Brightness", "DeckPlugin", "ChangeBrightness", "DeckPlugin/light.png", {"brightness": 75}),
+            ("Previous", "MediaPlugin", "Previous", "MediaPlugin/previous.png", {}),
+            ("Play / Pause", "MediaPlugin", "PlayPause", "MediaPlugin/play.png", {}),
+            ("Next", "MediaPlugin", "Next", "MediaPlugin/next.png", {}),
+            ("Dim", "DeckPlugin", "ChangeBrightness", "DeckPlugin/decrease_brightness.png", {"brightness": 25}),
+            ("Bright", "DeckPlugin", "ChangeBrightness", "DeckPlugin/increase_brightness.png", {"brightness": 100}),
+            ("Back", "DeckPlugin", "GoToPreviousPage", "DeckPlugin/go_to_previous_page.png", {}),
+            ("Pause", "MediaPlugin", "Pause", "MediaPlugin/pause.png", {}),
+            ("Play", "MediaPlugin", "Play", "MediaPlugin/play.png", {}),
+            ("Wait", "OSPlugin", "Delay", "OSPlugin/hourglass_empty-inv.png", {"delay": 0.5}),
+            ("Sleep", "DeckPlugin", "GoToSleep", "DeckPlugin/sleep.png", {}),
+        ]
+        page["keys"] = {}
+        for index, (label, plugin, action, icon, settings) in enumerate(entries):
+            state = {"actions": [{"id": f"com_core447_{plugin}::{action}" if implementation == "direct"
+                                  else f"native::{plugin}-{action}", "event": "auto", "settings": settings, "comment": ""}],
+                     "image-control-action": 0, "label-control-actions": [None, None, None],
+                     "media": {"path": str(ROOT / "Assets/NativeActions" / icon), "size": 0.72},
+                     "labels": {"bottom": {"text": label, "font-family": "Liberation Sans", "font-size": 11,
+                                            "color": [255, 255, 255, 255]}},
+                     "background": {"color": [[35, 65, 90, 255], [66, 48, 92, 255], [34, 72, 65, 255]][index // 5]}}
+            page["keys"][f"{index % 5}x{index // 5}"] = {"states": {"0": state}}
+        page_file.unlink()
+        (directory / "pages/Workspace.json").write_text(json.dumps(page))
+        (directory / "settings/pages.json").write_text(json.dumps({"default-pages": {
+            "fake-deck-1": str(directory / "pages/Workspace.json")}}))
+        (directory / "settings/native.json").write_text(json.dumps({"devices": {
+            "FAKE-ORIGINAL-0": {"page": "Workspace", "brightness": 75}}, "auto_lock": False}))
 
 
 def capture(args, implementation, pulse):
@@ -127,7 +167,7 @@ def capture(args, implementation, pulse):
             environment["PULSE_SERVER"] = pulse
         flags = ["--skip-load-hardware-decks", "--data", str(data)]
         if args.case != "no-devices":
-            flags.extend(["--fake-deck-model", "plus"])
+            flags.extend(["--fake-deck-model", "original" if args.case == "showcase" else "plus"])
         command = [str(args.native), *flags] if implementation == "rust" else [
             str(args.python), str(ROOT / "benchmarks/ui_reference.py"), str(args.direct),
             str(output / "editor.png"), *flags]
@@ -182,7 +222,7 @@ def main():
     report = {"case": args.case, "direct_upstream": compare.SHAS["direct"],
         "native_sha256": hashlib.sha256(args.native.read_bytes()).hexdigest(),
         "size": a.size, "mean_channel_error": mean, "pixels_over_4_percent": 100 * changed / (a.width * a.height),
-        "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
+        "environment": "GTK Cairo, private Weston desktop shell, identical saved-page fixtures",
         "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."}
     (args.output / "comparison.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)

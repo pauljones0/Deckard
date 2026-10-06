@@ -1,0 +1,13 @@
+{
+  "case": "graphs",
+  "direct_upstream": "a3609c7de63347dbc7e031926826898950600c83",
+  "native_sha256": "b5032a0c8a734914c41cdff6c968ba68173f39baa75bc78c098dbc15dc9f2dae",
+  "size": [
+    1400,
+    900
+  ],
+  "mean_channel_error": 1.0107703703703703,
+  "pixels_over_4_percent": 1.6157936507936508,
+  "environment": "GTK Cairo, private Weston desktop shell, identical saved-page fixtures",
+  "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+}

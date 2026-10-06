@@ -1,0 +1,1174 @@
+[
+  {
+    "case": "single",
+    "rusage_seconds": 0.651389,
+    "cgroup_seconds": 0.640415,
+    "old_sampler_seconds": 0.65,
+    "samples": [
+      {
+        "old_total": 0.0,
+        "kernel_total": 0.0
+      },
+      {
+        "old_total": 0.01,
+        "kernel_total": 0.0
+      },
+      {
+        "old_total": 0.01,
+        "kernel_total": 0.001987
+      },
+      {
+        "old_total": 0.02,
+        "kernel_total": 0.013895
+      },
+      {
+        "old_total": 0.03,
+        "kernel_total": 0.025846
+      },
+      {
+        "old_total": 0.05,
+        "kernel_total": 0.037484
+      },
+      {
+        "old_total": 0.06,
+        "kernel_total": 0.049032
+      },
+      {
+        "old_total": 0.06,
+        "kernel_total": 0.060588
+      },
+      {
+        "old_total": 0.08,
+        "kernel_total": 0.072184
+      },
+      {
+        "old_total": 0.09,
+        "kernel_total": 0.083795
+      },
+      {
+        "old_total": 0.11,
+        "kernel_total": 0.096707
+      },
+      {
+        "old_total": 0.12,
+        "kernel_total": 0.108343
+      },
+      {
+        "old_total": 0.13,
+        "kernel_total": 0.119904
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.131548
+      },
+      {
+        "old_total": 0.15000000000000002,
+        "kernel_total": 0.143082
+      },
+      {
+        "old_total": 0.16,
+        "kernel_total": 0.154493
+      },
+      {
+        "old_total": 0.18,
+        "kernel_total": 0.165905
+      },
+      {
+        "old_total": 0.18,
+        "kernel_total": 0.177755
+      },
+      {
+        "old_total": 0.2,
+        "kernel_total": 0.189316
+      },
+      {
+        "old_total": 0.21000000000000002,
+        "kernel_total": 0.20125
+      },
+      {
+        "old_total": 0.22999999999999998,
+        "kernel_total": 0.212788
+      },
+      {
+        "old_total": 0.22999999999999998,
+        "kernel_total": 0.224323
+      },
+      {
+        "old_total": 0.25,
+        "kernel_total": 0.235859
+      },
+      {
+        "old_total": 0.25,
+        "kernel_total": 0.247373
+      },
+      {
+        "old_total": 0.27,
+        "kernel_total": 0.25888
+      },
+      {
+        "old_total": 0.28,
+        "kernel_total": 0.270386
+      },
+      {
+        "old_total": 0.29000000000000004,
+        "kernel_total": 0.281931
+      },
+      {
+        "old_total": 0.30000000000000004,
+        "kernel_total": 0.293474
+      },
+      {
+        "old_total": 0.32,
+        "kernel_total": 0.304969
+      },
+      {
+        "old_total": 0.32,
+        "kernel_total": 0.316494
+      },
+      {
+        "old_total": 0.33999999999999997,
+        "kernel_total": 0.328144
+      },
+      {
+        "old_total": 0.35,
+        "kernel_total": 0.339659
+      },
+      {
+        "old_total": 0.36,
+        "kernel_total": 0.351009
+      },
+      {
+        "old_total": 0.38,
+        "kernel_total": 0.362558
+      },
+      {
+        "old_total": 0.38,
+        "kernel_total": 0.374097
+      },
+      {
+        "old_total": 0.39,
+        "kernel_total": 0.38559
+      },
+      {
+        "old_total": 0.41000000000000003,
+        "kernel_total": 0.397153
+      },
+      {
+        "old_total": 0.41000000000000003,
+        "kernel_total": 0.408648
+      },
+      {
+        "old_total": 0.43,
+        "kernel_total": 0.420201
+      },
+      {
+        "old_total": 0.44,
+        "kernel_total": 0.43169
+      },
+      {
+        "old_total": 0.45,
+        "kernel_total": 0.443225
+      },
+      {
+        "old_total": 0.47000000000000003,
+        "kernel_total": 0.455057
+      },
+      {
+        "old_total": 0.48000000000000004,
+        "kernel_total": 0.46657
+      },
+      {
+        "old_total": 0.48000000000000004,
+        "kernel_total": 0.478286
+      },
+      {
+        "old_total": 0.5,
+        "kernel_total": 0.489793
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.501336
+      },
+      {
+        "old_total": 0.52,
+        "kernel_total": 0.513565
+      },
+      {
+        "old_total": 0.53,
+        "kernel_total": 0.525067
+      },
+      {
+        "old_total": 0.55,
+        "kernel_total": 0.536851
+      },
+      {
+        "old_total": 0.55,
+        "kernel_total": 0.548425
+      },
+      {
+        "old_total": 0.5700000000000001,
+        "kernel_total": 0.559929
+      },
+      {
+        "old_total": 0.5800000000000001,
+        "kernel_total": 0.571443
+      },
+      {
+        "old_total": 0.59,
+        "kernel_total": 0.58296
+      },
+      {
+        "old_total": 0.6,
+        "kernel_total": 0.594521
+      },
+      {
+        "old_total": 0.61,
+        "kernel_total": 0.606013
+      },
+      {
+        "old_total": 0.63,
+        "kernel_total": 0.617522
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.629019
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.632918
+      },
+      {
+        "old_total": 0.65,
+        "kernel_total": 0.640415
+      }
+    ]
+  },
+  {
+    "case": "threads",
+    "rusage_seconds": 0.65818,
+    "cgroup_seconds": 0.646945,
+    "old_sampler_seconds": 0.6499999999999999,
+    "samples": [
+      {
+        "old_total": 0.0,
+        "kernel_total": 0.0
+      },
+      {
+        "old_total": 0.01,
+        "kernel_total": 0.0
+      },
+      {
+        "old_total": 0.01,
+        "kernel_total": 0.000995
+      },
+      {
+        "old_total": 0.02,
+        "kernel_total": 0.012491
+      },
+      {
+        "old_total": 0.03,
+        "kernel_total": 0.024453
+      },
+      {
+        "old_total": 0.04,
+        "kernel_total": 0.036008
+      },
+      {
+        "old_total": 0.060000000000000005,
+        "kernel_total": 0.046975
+      },
+      {
+        "old_total": 0.060000000000000005,
+        "kernel_total": 0.058108
+      },
+      {
+        "old_total": 0.08,
+        "kernel_total": 0.068791
+      },
+      {
+        "old_total": 0.09,
+        "kernel_total": 0.079783
+      },
+      {
+        "old_total": 0.1,
+        "kernel_total": 0.090856
+      },
+      {
+        "old_total": 0.11,
+        "kernel_total": 0.101628
+      },
+      {
+        "old_total": 0.12000000000000001,
+        "kernel_total": 0.113131
+      },
+      {
+        "old_total": 0.13,
+        "kernel_total": 0.124247
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.135536
+      },
+      {
+        "old_total": 0.16,
+        "kernel_total": 0.14702
+      },
+      {
+        "old_total": 0.16,
+        "kernel_total": 0.158347
+      },
+      {
+        "old_total": 0.18,
+        "kernel_total": 0.16958
+      },
+      {
+        "old_total": 0.19,
+        "kernel_total": 0.181021
+      },
+      {
+        "old_total": 0.2,
+        "kernel_total": 0.192729
+      },
+      {
+        "old_total": 0.21000000000000002,
+        "kernel_total": 0.203792
+      },
+      {
+        "old_total": 0.22,
+        "kernel_total": 0.213777
+      },
+      {
+        "old_total": 0.22999999999999998,
+        "kernel_total": 0.225183
+      },
+      {
+        "old_total": 0.25,
+        "kernel_total": 0.23649
+      },
+      {
+        "old_total": 0.25,
+        "kernel_total": 0.248023
+      },
+      {
+        "old_total": 0.27,
+        "kernel_total": 0.258954
+      },
+      {
+        "old_total": 0.28,
+        "kernel_total": 0.270056
+      },
+      {
+        "old_total": 0.29000000000000004,
+        "kernel_total": 0.281327
+      },
+      {
+        "old_total": 0.3,
+        "kernel_total": 0.292604
+      },
+      {
+        "old_total": 0.31,
+        "kernel_total": 0.303796
+      },
+      {
+        "old_total": 0.33,
+        "kernel_total": 0.315248
+      },
+      {
+        "old_total": 0.33,
+        "kernel_total": 0.326716
+      },
+      {
+        "old_total": 0.35,
+        "kernel_total": 0.338195
+      },
+      {
+        "old_total": 0.36,
+        "kernel_total": 0.350233
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.361419
+      },
+      {
+        "old_total": 0.38,
+        "kernel_total": 0.372913
+      },
+      {
+        "old_total": 0.4,
+        "kernel_total": 0.383493
+      },
+      {
+        "old_total": 0.4,
+        "kernel_total": 0.394893
+      },
+      {
+        "old_total": 0.41000000000000003,
+        "kernel_total": 0.406289
+      },
+      {
+        "old_total": 0.43000000000000005,
+        "kernel_total": 0.417007
+      },
+      {
+        "old_total": 0.43000000000000005,
+        "kernel_total": 0.428469
+      },
+      {
+        "old_total": 0.44999999999999996,
+        "kernel_total": 0.439928
+      },
+      {
+        "old_total": 0.45999999999999996,
+        "kernel_total": 0.451159
+      },
+      {
+        "old_total": 0.47,
+        "kernel_total": 0.462623
+      },
+      {
+        "old_total": 0.48,
+        "kernel_total": 0.474609
+      },
+      {
+        "old_total": 0.5,
+        "kernel_total": 0.486199
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.497729
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.508522
+      },
+      {
+        "old_total": 0.53,
+        "kernel_total": 0.519528
+      },
+      {
+        "old_total": 0.54,
+        "kernel_total": 0.530735
+      },
+      {
+        "old_total": 0.55,
+        "kernel_total": 0.54189
+      },
+      {
+        "old_total": 0.5700000000000001,
+        "kernel_total": 0.553115
+      },
+      {
+        "old_total": 0.5700000000000001,
+        "kernel_total": 0.564634
+      },
+      {
+        "old_total": 0.5800000000000001,
+        "kernel_total": 0.575741
+      },
+      {
+        "old_total": 0.6000000000000001,
+        "kernel_total": 0.587162
+      },
+      {
+        "old_total": 0.6100000000000001,
+        "kernel_total": 0.598773
+      },
+      {
+        "old_total": 0.62,
+        "kernel_total": 0.610562
+      },
+      {
+        "old_total": 0.63,
+        "kernel_total": 0.622085
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.633569
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.64,
+        "kernel_total": 0.639807
+      },
+      {
+        "old_total": 0.6499999999999999,
+        "kernel_total": 0.645774
+      }
+    ]
+  },
+  {
+    "case": "nested-reaping",
+    "rusage_seconds": 0.5357669999999999,
+    "cgroup_seconds": 0.525219,
+    "old_sampler_seconds": 0.52,
+    "samples": [
+      {
+        "old_total": 0.0,
+        "kernel_total": 0.0
+      },
+      {
+        "old_total": 0.01,
+        "kernel_total": 0.0
+      },
+      {
+        "old_total": 0.01,
+        "kernel_total": 6e-06
+      },
+      {
+        "old_total": 0.02,
+        "kernel_total": 0.010084
+      },
+      {
+        "old_total": 0.03,
+        "kernel_total": 0.021976
+      },
+      {
+        "old_total": 0.04,
+        "kernel_total": 0.035217
+      },
+      {
+        "old_total": 0.04,
+        "kernel_total": 0.058236
+      },
+      {
+        "old_total": 0.07,
+        "kernel_total": 0.083173
+      },
+      {
+        "old_total": 0.1,
+        "kernel_total": 0.109222
+      },
+      {
+        "old_total": 0.11,
+        "kernel_total": 0.123054
+      },
+      {
+        "old_total": 0.12,
+        "kernel_total": 0.134748
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.146371
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.15384
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.14,
+        "kernel_total": 0.153998
+      },
+      {
+        "old_total": 0.15000000000000002,
+        "kernel_total": 0.160758
+      },
+      {
+        "old_total": 0.15000000000000002,
+        "kernel_total": 0.183614
+      },
+      {
+        "old_total": 0.19000000000000003,
+        "kernel_total": 0.206833
+      },
+      {
+        "old_total": 0.21000000000000002,
+        "kernel_total": 0.230128
+      },
+      {
+        "old_total": 0.22000000000000003,
+        "kernel_total": 0.243954
+      },
+      {
+        "old_total": 0.23000000000000004,
+        "kernel_total": 0.255672
+      },
+      {
+        "old_total": 0.24000000000000002,
+        "kernel_total": 0.267327
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.274893
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.26,
+        "kernel_total": 0.275041
+      },
+      {
+        "old_total": 0.27,
+        "kernel_total": 0.2792
+      },
+      {
+        "old_total": 0.27,
+        "kernel_total": 0.30235
+      },
+      {
+        "old_total": 0.29000000000000004,
+        "kernel_total": 0.326283
+      },
+      {
+        "old_total": 0.33,
+        "kernel_total": 0.349547
+      },
+      {
+        "old_total": 0.34,
+        "kernel_total": 0.364332
+      },
+      {
+        "old_total": 0.35000000000000003,
+        "kernel_total": 0.375907
+      },
+      {
+        "old_total": 0.36,
+        "kernel_total": 0.387539
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.395925
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.37,
+        "kernel_total": 0.396082
+      },
+      {
+        "old_total": 0.39,
+        "kernel_total": 0.400482
+      },
+      {
+        "old_total": 0.39,
+        "kernel_total": 0.423183
+      },
+      {
+        "old_total": 0.43,
+        "kernel_total": 0.446348
+      },
+      {
+        "old_total": 0.45,
+        "kernel_total": 0.470113
+      },
+      {
+        "old_total": 0.46,
+        "kernel_total": 0.486597
+      },
+      {
+        "old_total": 0.47000000000000003,
+        "kernel_total": 0.498292
+      },
+      {
+        "old_total": 0.48,
+        "kernel_total": 0.51004
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.516946
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.49,
+        "kernel_total": 0.517092
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.51,
+        "kernel_total": 0.517165
+      },
+      {
+        "old_total": 0.52,
+        "kernel_total": 0.520141
+      }
+    ]
+  },
+  {
+    "case": "detached-child",
+    "rusage_seconds": 0.051984,
+    "cgroup_seconds": 0.341937,
+    "old_sampler_seconds": 0.04,
+    "samples": [
+      {
+        "old_total": 0.0,
+        "kernel_total": 0.0
+      },
+      {
+        "old_total": 0.04,
+        "kernel_total": 0.333757
+      }
+    ]
+  }
+]

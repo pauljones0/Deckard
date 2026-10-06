@@ -1,0 +1,29 @@
+{
+  "application_tag": "v0.10.0",
+  "tag_revision": "0d739e753650305c563f8e9378e5c5b4c009ec78",
+  "application_source_revision": "2bd27218dbec3c52bd2519c21939ad5d974621fc",
+  "native_sha256": "b5032a0c8a734914c41cdff6c968ba68173f39baa75bc78c098dbc15dc9f2dae",
+  "application_changes_during_audit": false,
+  "benchmark_driver_working_tree": "Measurement and screenshot tooling changed during the audit; application sources and the release executable remained unchanged. CPU attribution and extra validation were added after the common-action timing phase.",
+  "timing_inclusion": [
+    "common-actions/results.json"
+  ],
+  "excluded": [
+    "threads-normal",
+    "threads-slow",
+    "graph-profile",
+    "endpoint-smoke",
+    "ui",
+    "graph-frames"
+  ],
+  "gpu_load_end_spot_check": "99% GPU, 1% memory controller utilization; unrelated user job left running",
+  "native_python_runtime": false,
+  "audit_tool_sha256": {
+    "benchmarks/accounting.py": "c38584b80e4f80ef0a978c065600b7e0b9e5052822387723db14bec3a14faeea",
+    "benchmarks/compare.py": "28bb4c22067b72b4af0f0aaa3e659d449b42559d7901a085d3e9a19556738aed",
+    "benchmarks/observe_threads.py": "08d676d3b0d4f0c6ebc522b48e3db773ffb031bcc979c4514e60a7bfa907f2a5",
+    "benchmarks/audit_report.py": "1a86ca121b91b6377f2564ff9bef2d558097eae872293a2f000e36dd75cece04",
+    "benchmarks/ui_parity.py": "1518334e36bdf2a0e9a1b423724e08d9a03a026103f2ce09f1c2f3140bca6fea"
+  },
+  "audit_tool_note": "Hashes identify the final reproducible tools. Diagnostic options and constructor-error cleanup were added after the included timing phase; CPU/PSS measurement semantics are unchanged."
+}

@@ -6,9 +6,11 @@ The reference is [nazbert/Deckard `a3609c7d`](https://github.com/nazbert/Deckard
 
 The paired headers, 40% sidebar, state selector, selected-input preview, key grid, dials, touchstrip, grouped controls, action chooser and event assignments follow the reference. The asset manager, page manager, deck settings and seven preferences pages use the same layout and captions. Native plugin settings use declared fields, icons and colors instead of Python widget factories.
 
+The README now shows a configured 15-key Original with OS, deck and media actions. The former image was an empty Plus benchmark page. The new screenshot is an actual capture of the released Rust executable; the reference uses the same saved page and artwork. Model captions and device-label rasterization still differ. [Configured-page comparison](../benchmarks/results/2026-10-06/performance-audit/ui/showcase/comparison.json).
+
 ## What was checked
 
-`benchmarks/ui_parity.py` launches the actual reference and Rust applications with isolated data, identical fonts, GTK renderer, window sizes and fake Plus fixtures. It records screenshots, mapped widget bounds and pixel differences. The populated chooser loads all five reference plugins, using a private null-sink audio server and the reference OBS dependencies; a failed plugin startup cannot silently pass that comparison.
+`benchmarks/ui_parity.py` launches the actual reference and Rust applications with isolated data, identical fonts, GTK renderer, window sizes and matched saved pages. It records screenshots, mapped widget bounds and pixel differences. The populated chooser loads all five reference plugins, using a private null-sink audio server and the reference OBS dependencies; a failed plugin startup cannot silently pass that comparison.
 
 UI settings, performance settings, custom assets, icon-pack chooser, page manager and the no-device screen match pixel-for-pixel in the recorded fixture. The main screen differs in about 0.30% of pixels, concentrated in deck-text rendering. Python/Pillow and Rust/ab_glyph rasterize those labels differently. Fake serials and isolated data paths also differ. These checks establish the recorded layouts, not universal pixel identity for every font, plugin panel, theme or system library version. [Paired screenshots and widget bounds](../benchmarks/results/2026-10-06/gtk-0.10/ui) · [Pixel reports](../benchmarks/results/2026-10-06/gtk-0.10/ui-comparison.json) · [Reference screenshot](images/gtk-editor-reference.png).
 
