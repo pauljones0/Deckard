@@ -31,6 +31,46 @@ pub fn resolve(action: &Value, event: &str) -> Result<Value> {
         .cloned()
         .context("native builtin has no implementation")
 }
+/// Application-owned Event Assigner rows; names match upstream's stored keys.
+pub fn input_events(family: &str) -> &'static [(&'static str, &'static str)] {
+    match family {
+        "dials" => &[
+            ("Dial Down", "press"),
+            ("Dial Up", "release"),
+            ("Dial Short Up", "short-release"),
+            ("Dial Hold Start", "long-press"),
+            ("Dial Hold Stop", "long-release"),
+            ("Dial Turn CW", "turn-cw"),
+            ("Dial Turn CCW", "turn-ccw"),
+            ("Dial Touchscreen Short Press", "touch"),
+            ("Dial Touchscreen Long Press", "long-touch"),
+        ],
+        "touchscreens" => &[
+            ("Touchscreen Drag Left", "swipe-left"),
+            ("Touchscreen Drag Right", "swipe-right"),
+        ],
+        _ => &[
+            ("Key Down", "press"),
+            ("Key Up", "release"),
+            ("Key Short Up", "short-release"),
+            ("Key Hold Start", "long-press"),
+            ("Key Hold Stop", "long-release"),
+        ],
+    }
+}
+pub fn assigned_event_matches(action: &Value, family: &str, event: &str, was_long: bool) -> bool {
+    input_events(family).iter().any(|(title, native)| {
+        let actual = match *native {
+            "short-release" => event == "release" && !was_long,
+            "long-release" => event == "release" && was_long,
+            native => native == event,
+        };
+        actual
+            && action["event-assignments"]
+                .get(title)
+                .map_or_else(|| event_matches(action, native), |v| !v.is_null())
+    })
+}
 pub fn event_matches(action: &Value, event: &str) -> bool {
     let filter = action["event"].as_str().unwrap_or("press");
     if filter == "auto" {

@@ -77,6 +77,7 @@ impl Bridge {
                                 device.page.clone(),
                                 device.brightness,
                                 device.sleeping,
+                                device.low_fps,
                                 if observed_hidden.load(Ordering::Relaxed) {
                                     0
                                 } else {

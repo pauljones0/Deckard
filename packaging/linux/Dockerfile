@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/c
     && dbus-run-session -- cargo test --workspace --locked \
     && cargo clippy --workspace --all-targets --locked -- -D warnings \
     && cargo fmt --all -- --check \
-    && dbus-run-session -- xvfb-run -a -s "-screen 0 1600x1000x24" \
+    && dbus-run-session -- xvfb-run -a -s "-screen 0 1800x1000x24" \
        env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-criticals \
        cargo test -p deckard gtk_editor_workflows --locked -- --ignored --test-threads=1 \
     && mkdir -p target/release \

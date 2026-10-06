@@ -39,6 +39,10 @@ def license_records(prefix):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
     (destination / "rust-dependencies.json").write_text(json.dumps(records, indent=2) + "\n")
+    for path in (ROOT / "Assets/NativeActions").rglob("*.txt"):
+        target = destination / "artwork" / path.relative_to(ROOT / "Assets/NativeActions")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
 
 
 def stage(staging):
@@ -51,6 +55,7 @@ def stage(staging):
     icons = staging / "usr/share/icons/hicolor/512x512/apps"
     icons.mkdir(parents=True)
     shutil.copy2(ROOT / f"Assets/icons/hicolor/512x512/apps/{APP_ID}.png", icons)
+    shutil.copytree(ROOT / "Assets/icons", staging / "usr/share/deckard/icons")
     rules = staging / "usr/lib/udev/rules.d"
     rules.mkdir(parents=True)
     shutil.copy2(ROOT / "udev.rules", rules / "60-deckard.rules")
@@ -75,7 +80,7 @@ def deb(staging, output, work):
     generated = subprocess.check_output(
         ["dpkg-shlibdeps", "-O", *[f"-e{p}" for p in elf]], cwd=work, text=True
     ).strip().removeprefix("shlibs:Depends=")
-    dependencies = generated + ", libgtk-4-1 (>= 4.16), libadwaita-1-0 (>= 1.6), adwaita-icon-theme, ffmpeg, xdotool, wtype, pulseaudio-utils, iputils-ping, udev, xdg-utils, xdg-desktop-portal, hicolor-icon-theme"
+    dependencies = generated + ", libgtk-4-1 (>= 4.16), libadwaita-1-0 (>= 1.7), adwaita-icon-theme, ffmpeg, xdotool, wtype, pulseaudio-utils, iputils-ping, udev, xdg-utils, xdg-desktop-portal, hicolor-icon-theme"
     control = staging / "DEBIAN"
     control.mkdir()
     arch = "amd64" if ARCH == "x86_64" else "arm64"
@@ -98,7 +103,7 @@ Release: 1%{{?dist}}
 Summary: Native Rust Stream Deck controller
 License: GPL-3.0-or-later
 URL: https://github.com/pauljones0/Deckard
-Requires: gtk4 >= 4.16, libadwaita >= 1.6, adwaita-icon-theme
+Requires: gtk4 >= 4.16, libadwaita >= 1.7, adwaita-icon-theme
 Requires: /usr/bin/ffmpeg, /usr/bin/ffprobe, xdotool, wtype, pulseaudio-utils, iputils, systemd-udev, xdg-utils, xdg-desktop-portal, hicolor-icon-theme
 %global _build_id_links none
 %global debug_package %{{nil}}
@@ -117,6 +122,7 @@ command -v modprobe >/dev/null && modprobe uinput >/dev/null 2>&1 || :
 /usr/lib/deckard
 /usr/bin/deckard
 /usr/share/applications/deckard.desktop
+/usr/share/deckard
 /usr/share/icons/hicolor/512x512/apps/{APP_ID}.png
 /usr/lib/udev/rules.d/60-deckard.rules
 """)
@@ -138,7 +144,7 @@ pkgdesc='Native Rust Stream Deck controller'
 arch=('x86_64')
 url='https://github.com/pauljones0/Deckard'
 license=('GPL-3.0-or-later')
-depends=('glibc' 'gcc-libs' 'systemd-libs' 'gtk4>=4.16' 'libadwaita>=1.6' 'adwaita-icon-theme' 'ffmpeg' 'libpulse' 'iputils' 'xdg-utils' 'xdg-desktop-portal' 'xdotool' 'wtype' 'hicolor-icon-theme')
+depends=('glibc' 'gcc-libs' 'systemd-libs' 'gtk4>=4.16' 'libadwaita>=1.7' 'adwaita-icon-theme' 'ffmpeg' 'libpulse' 'iputils' 'xdg-utils' 'xdg-desktop-portal' 'xdotool' 'wtype' 'hicolor-icon-theme')
 optdepends=('kdotool: KDE automatic page switching')
 options=('!debug' '!strip')
 install=deckard.install

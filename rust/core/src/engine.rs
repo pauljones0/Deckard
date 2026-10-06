@@ -40,6 +40,7 @@ pub struct Device {
     pub written_tiles: u64,
     pub written_bytes: u64,
     pub write_time_us: u64,
+    pub low_fps: bool,
 }
 pub struct Engine {
     pub docs: Documents,
@@ -50,6 +51,7 @@ pub struct Engine {
     pub quit: bool,
     pub restart: bool,
     pub locked: bool,
+    pub animations_idle: bool,
     pub generation: u64,
     pub plugin_revision: u64,
     pub frame_ready: Arc<crate::transport::FrameSignal>,
@@ -57,11 +59,51 @@ pub struct Engine {
     overlays: HashMap<(String, String, String, usize), Value>,
     pub(crate) live_overlays: HashMap<String, (crate::live::Action, Value)>,
     pub(crate) background_overlays: HashMap<String, (crate::live::Action, String, Value)>,
+    background_view_previews: HashMap<String, HashMap<String, Value>>,
     pub(crate) command_holds: HashSet<String>,
     pub(crate) command_runs: HashMap<String, Instant>,
     returns: Vec<TimedReturn>,
 }
 pub type Shared = Arc<Mutex<Engine>>;
+
+// Measure render work, excluding frame pacing and USB waits. Keep the same
+// two-second median and 80% threshold as the upstream warning monitor.
+#[derive(Default)]
+struct WorkCapacity {
+    samples: VecDeque<Duration>,
+    target: u32,
+    since_check: usize,
+    low: bool,
+}
+impl WorkCapacity {
+    fn record(&mut self, work: Duration, target: u32) -> bool {
+        let target = target.clamp(1, crate::animation::MAX_FPS);
+        if self.target != target {
+            self.samples.clear();
+            self.target = target;
+            self.since_check = 0;
+            self.low = false;
+        }
+        self.samples.push_back(work);
+        self.since_check += 1;
+        let window = (target as usize * 2).clamp(5, 240);
+        while self.samples.len() > window {
+            self.samples.pop_front();
+        }
+        if self.samples.len() < window {
+            return false;
+        }
+        if self.since_check < target as usize {
+            return self.low;
+        }
+        self.since_check = 0;
+        let mut samples: Vec<_> = self.samples.iter().copied().collect();
+        let middle = samples.len() / 2;
+        samples.select_nth_unstable(middle);
+        self.low = samples[middle].as_secs_f64() > 1. / (f64::from(target) * 0.8);
+        self.low
+    }
+}
 impl Engine {
     pub fn open(root: PathBuf) -> Result<Shared> {
         crate::store::recover_installs(&root)?;
@@ -76,6 +118,7 @@ impl Engine {
             quit: false,
             restart: false,
             locked: false,
+            animations_idle: false,
             generation: 0,
             plugin_revision: 0,
             frame_ready: Arc::new(crate::transport::FrameSignal::default()),
@@ -86,6 +129,7 @@ impl Engine {
             overlays: HashMap::new(),
             live_overlays: HashMap::new(),
             background_overlays: HashMap::new(),
+            background_view_previews: HashMap::new(),
             command_holds: HashSet::new(),
             command_runs: HashMap::new(),
             returns: Vec::new(),
@@ -179,22 +223,69 @@ impl Engine {
         };
         Some((number, data))
     }
+    /// Crop dialog previews affect frames without writing page/settings files.
+    /// Owners are captured when the dialog opens, independent of UI selection.
+    pub fn preview_background_view(&mut self, owner: &str, path: &str, view: Value) {
+        self.background_view_previews
+            .entry(owner.into())
+            .or_default()
+            .insert(path.into(), view);
+        self.generation = self.generation.wrapping_add(1);
+        self.frame_ready.notify();
+    }
+    pub fn clear_background_view_preview(&mut self, owner: &str) {
+        if self.background_view_previews.remove(owner).is_some() {
+            self.generation = self.generation.wrapping_add(1);
+            self.frame_ready.notify();
+        }
+    }
     pub fn config(&self, serial: &str) -> Option<RenderConfig> {
         let device = self.devices.get(serial)?;
         let mut page = self.docs.pages.get(&device.page)?.clone();
         let deck = &self.docs.settings["devices"][serial];
+        let mut background_owner = format!("page:{}", device.page);
         if page["background"].is_null()
             || !page["background"]["overwrite"].as_bool().unwrap_or(true)
         {
             page["background"] = deck["background"].clone();
+            background_owner = format!("device:{serial}");
+        }
+        if let Some(previews) = self.background_view_previews.get(&background_owner) {
+            let background = &mut page["background"];
+            if let Some(view) = background["media-path"]
+                .as_str()
+                .and_then(|p| previews.get(p))
+            {
+                background["view"] = view.clone();
+            }
+            if let Some(slides) = background["media-paths"].as_array_mut() {
+                for slide in slides {
+                    let path = slide
+                        .as_str()
+                        .or_else(|| slide["path"].as_str())
+                        .unwrap_or("");
+                    if let Some(view) = previews.get(path) {
+                        if slide.is_string() {
+                            *slide = json!({"path":path});
+                        }
+                        slide["view"] = view.clone();
+                    }
+                }
+            }
         }
         let active = self.saver_active(serial);
         if active {
             let saver = self.saver(serial);
-            page = json!({"background":{"media-path":saver["media-path"],"extend-to-touchscreen":true}});
+            page = json!({"background":{"media-path":saver["media-path"],"extend-to-touchscreen":true,
+                "loop":saver["loop"].as_bool().unwrap_or(true), "fps":saver["fps"].as_u64().unwrap_or(0), "view":saver["view"]}});
         }
         page["name"] = json!(device.page);
-        page["native-options"] = json!({"shrink-on-press": self.docs.settings["shrink_on_press"].as_bool().unwrap_or(true)});
+        page["native-options"] = json!({"shrink-on-press": self.docs.settings["shrink_on_press"].as_bool().unwrap_or(true),
+            "saturation":deck["display"]["saturation"].as_f64().unwrap_or(1.0).clamp(1.0,2.0),
+            "cache-videos":self.docs.settings["performance"]["cache-videos"].as_bool().unwrap_or(true),
+            "rolling-labels":self.docs.settings["rolling_labels"].as_bool().unwrap_or(true),
+            "pause-animations":!active && self.animations_idle && self.docs.settings["animation_pause_mode"].as_str() == Some("system-idle"),
+            "cached-pages":self.docs.settings["performance"]["n-cached-pages"].as_u64().unwrap_or(3).min(50)});
         let mut sticky = if active {
             json!({})
         } else {
@@ -264,6 +355,74 @@ impl Engine {
                     a.state,
                 ) {
                     crate::live::apply(state, a.index, value);
+                    if let Some(path) = state["media"]["path"]
+                        .as_str()
+                        .and_then(|p| p.strip_prefix("builtin://"))
+                        && let Some((plugin, filename)) = path.split_once('/')
+                    {
+                        let name = filename.strip_suffix(".png").unwrap_or(filename);
+                        let settings = &self.docs.settings["plugins"]
+                            [format!("com_core447_{plugin}")]["assets"][name];
+                        if let Some(path) = settings.as_str().or_else(|| settings["path"].as_str())
+                        {
+                            state["media"]["path"] = json!(path);
+                        }
+                        for key in ["size", "halign", "valign"] {
+                            if settings[key].is_number() {
+                                state["media"][key] = settings[key].clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Inject global font defaults after action overlays, leaving the stored
+        // page untouched so sidebar Revert continues to restore action styling.
+        for document in [&mut page, &mut sticky] {
+            for family in ["keys", "dials", "touchscreens", "infobar"] {
+                if let Some(inputs) = document[family].as_object_mut() {
+                    for input in inputs.values_mut() {
+                        if let Some(states) = input["states"].as_object_mut() {
+                            for state in states.values_mut() {
+                                if !state.is_object() {
+                                    continue;
+                                }
+                                for position in ["top", "center", "bottom"] {
+                                    for (key, alias) in [
+                                        ("outline-width", "outline_width"),
+                                        ("outline-color", "outline_color"),
+                                        ("font-style", "style"),
+                                    ] {
+                                        if state["labels"][position][key].is_null()
+                                            && !state["labels"][position][alias].is_null()
+                                        {
+                                            state["labels"][position][key] =
+                                                state["labels"][position][alias].clone();
+                                        }
+                                    }
+                                    for key in [
+                                        "font-family",
+                                        "font-size",
+                                        "font-weight",
+                                        "font-style",
+                                        "color",
+                                        "outline-width",
+                                        "outline-color",
+                                        "alignment",
+                                    ] {
+                                        let source =
+                                            if key == "color" { "font-color" } else { key };
+                                        let default = &self.docs.settings["font_defaults"][source];
+                                        if state["labels"][position][key].is_null()
+                                            && !default.is_null()
+                                        {
+                                            state["labels"][position][key] = default.clone();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -297,7 +456,7 @@ impl Engine {
         }
     }
     pub fn status(&self) -> Value {
-        let mut devices:Vec<_>=self.devices.values().map(|d|json!({"serial":d.serial,"model":format!("{:?}",d.kind),"fake":d.fake,"connected":d.connected,"page":d.page,"brightness":d.brightness,"sleeping":d.sleeping,"rendered_frames":d.rendered_frames,"tile_updates":d.tile_updates,"frame_clock_us":d.frame_clock.elapsed().as_micros() as u64,"native_key_size":d.key_size,"native_strip_size":d.kind.lcd_strip_size(),"max_fps":self.docs.settings["devices"][&d.serial]["max_fps"].as_u64().unwrap_or(0),"written_tiles":d.written_tiles,"written_bytes":d.written_bytes,"write_time_us":d.write_time_us,"frame_tiles":d.frame.as_ref().map(|f|f.tiles.iter().map(|t|json!({"key":t.key,"width":t.width,"height":t.height,"identity":t.identity})).collect::<Vec<_>>())})).collect();
+        let mut devices:Vec<_>=self.devices.values().map(|d|json!({"serial":d.serial,"model":format!("{:?}",d.kind),"fake":d.fake,"connected":d.connected,"page":d.page,"brightness":d.brightness,"sleeping":d.sleeping,"rendered_frames":d.rendered_frames,"low_fps":d.low_fps,"tile_updates":d.tile_updates,"frame_clock_us":d.frame_clock.elapsed().as_micros() as u64,"native_key_size":d.key_size,"native_strip_size":d.kind.lcd_strip_size(),"max_fps":self.docs.settings["devices"][&d.serial]["max_fps"].as_u64().unwrap_or(0),"written_tiles":d.written_tiles,"written_bytes":d.written_bytes,"write_time_us":d.write_time_us,"frame_tiles":d.frame.as_ref().map(|f|f.tiles.iter().map(|t|json!({"key":t.key,"width":t.width,"height":t.height,"identity":t.identity})).collect::<Vec<_>>())})).collect();
         devices.sort_by_key(|d| d["serial"].as_str().unwrap_or("").to_owned());
         json!({"version":env!("CARGO_PKG_VERSION"),"runtime":"Rust","plugin_api":1,"devices":devices,"pages":self.docs.pages.keys().collect::<Vec<_>>(),"errors":self.errors,"locked":self.locked})
     }
@@ -429,7 +588,9 @@ impl Engine {
             }
             "get-page" => return Ok(self.docs.pages.get(name).context("page not found")?.clone()),
             "create-page" => self.docs.create(name)?,
-            "put-page" => self.docs.put(name, p["document"].clone())?,
+            "put-page" => self
+                .docs
+                .put(p["name"].as_str().unwrap_or(name), p["document"].clone())?,
             "delete-page" => {
                 self.docs.delete(name)?;
                 let replacement = self.docs.pages.keys().next().unwrap().clone();
@@ -736,6 +897,24 @@ pub struct Runtime {
 }
 impl Runtime {
     pub fn start(shared: Shared, fakes: Vec<Kind>, hardware: bool) -> Result<Self> {
+        let mut fakes = fakes;
+        {
+            let mut engine = shared.lock().unwrap();
+            if fakes.is_empty() {
+                let count = engine.docs.settings["dev"]["n-fake-decks"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .min(3);
+                fakes.resize(count as usize, Kind::OriginalV2);
+            } else {
+                // Explicit models establish the current count, just as the
+                // upstream command line does; later Preferences edits are live.
+                if !engine.docs.settings["dev"].is_object() {
+                    engine.docs.settings["dev"] = json!({});
+                }
+                engine.docs.settings["dev"]["n-fake-decks"] = json!(fakes.len());
+            }
+        }
         let stop = Arc::new(AtomicBool::new(false));
         let (events, receiver) = mpsc::sync_channel(256);
         let mut threads = Vec::new();
@@ -778,18 +957,25 @@ impl Runtime {
         let manager_stop = stop.clone();
         let manager_events = events.clone();
         threads.push(thread::spawn(move || {
-            let mut workers = HashMap::<String, JoinHandle<()>>::new();
+            let mut workers = HashMap::<String, (Arc<AtomicBool>, JoinHandle<()>)>::new();
+            let mut fake_serials = Vec::new();
+            let fake_model = fakes.last().copied().unwrap_or(Kind::OriginalV2);
             for (index, kind) in fakes.into_iter().enumerate() {
                 let serial = format!("FAKE-{}-{index}", format!("{kind:?}").to_uppercase());
+                fake_serials.push(serial.clone());
+                let device_stop = Arc::new(AtomicBool::new(false));
                 workers.insert(
                     serial.clone(),
-                    start_device(
-                        manager_shared.clone(),
-                        manager_events.clone(),
-                        manager_stop.clone(),
-                        serial,
-                        kind,
-                        true,
+                    (
+                        device_stop.clone(),
+                        start_device(
+                            manager_shared.clone(),
+                            manager_events.clone(),
+                            device_stop,
+                            serial,
+                            kind,
+                            true,
+                        ),
                     ),
                 );
             }
@@ -799,7 +985,91 @@ impl Runtime {
                 None
             };
             let mut next_scan = Instant::now();
+            let mut remote = None;
+            let mut remote_enabled = false;
             while !manager_stop.load(Ordering::Relaxed) {
+                let enable_remote =
+                    manager_shared.lock().unwrap().docs.settings["dev"]["n-remote-decks"]
+                        .as_u64()
+                        .unwrap_or(0)
+                        > 0;
+                if enable_remote != remote_enabled {
+                    remote_enabled = enable_remote;
+                    if enable_remote {
+                        match crate::remote::Server::start(
+                            manager_shared.clone(),
+                            manager_events.clone(),
+                        ) {
+                            Ok(server) => {
+                                remote = Some(server);
+                                let serial = "remote-deck-1".to_owned();
+                                let stop = Arc::new(AtomicBool::new(false));
+                                workers.insert(
+                                    serial.clone(),
+                                    (
+                                        stop.clone(),
+                                        start_device(
+                                            manager_shared.clone(),
+                                            manager_events.clone(),
+                                            stop,
+                                            serial,
+                                            Kind::OriginalV2,
+                                            true,
+                                        ),
+                                    ),
+                                );
+                            }
+                            Err(error) => manager_shared.lock().unwrap().error(error),
+                        }
+                    } else {
+                        remote.take();
+                        if let Some((stop, worker)) = workers.remove("remote-deck-1") {
+                            stop.store(true, Ordering::Relaxed);
+                            let _ = worker.join();
+                        }
+                        let mut engine = manager_shared.lock().unwrap();
+                        engine.devices.remove("remote-deck-1");
+                        engine.generation += 1;
+                    }
+                }
+                let wanted = manager_shared.lock().unwrap().docs.settings["dev"]["n-fake-decks"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .min(3) as usize;
+                while fake_serials.len() > wanted {
+                    let serial = fake_serials.pop().unwrap();
+                    if let Some((stop, worker)) = workers.remove(&serial) {
+                        stop.store(true, Ordering::Relaxed);
+                        let _ = worker.join();
+                    }
+                    let mut engine = manager_shared.lock().unwrap();
+                    engine.devices.remove(&serial);
+                    engine.generation += 1;
+                    engine.frame_ready.notify();
+                }
+                while fake_serials.len() < wanted {
+                    let serial = format!(
+                        "FAKE-{}-{}",
+                        format!("{fake_model:?}").to_uppercase(),
+                        fake_serials.len()
+                    );
+                    fake_serials.push(serial.clone());
+                    let stop = Arc::new(AtomicBool::new(false));
+                    workers.insert(
+                        serial.clone(),
+                        (
+                            stop.clone(),
+                            start_device(
+                                manager_shared.clone(),
+                                manager_events.clone(),
+                                stop,
+                                serial,
+                                fake_model,
+                                true,
+                            ),
+                        ),
+                    );
+                }
                 if hardware && Instant::now() >= next_scan {
                     next_scan = Instant::now() + Duration::from_secs(2);
                     if api.is_none() {
@@ -809,15 +1079,19 @@ impl Runtime {
                         let _ = elgato_streamdeck::refresh_device_list(api);
                         for (kind, serial) in elgato_streamdeck::list_devices(api) {
                             if !workers.contains_key(&serial) {
+                                let device_stop = Arc::new(AtomicBool::new(false));
                                 workers.insert(
                                     serial.clone(),
-                                    start_device(
-                                        manager_shared.clone(),
-                                        manager_events.clone(),
-                                        manager_stop.clone(),
-                                        serial,
-                                        kind,
-                                        false,
+                                    (
+                                        device_stop.clone(),
+                                        start_device(
+                                            manager_shared.clone(),
+                                            manager_events.clone(),
+                                            device_stop,
+                                            serial,
+                                            kind,
+                                            false,
+                                        ),
                                     ),
                                 );
                             }
@@ -826,7 +1100,11 @@ impl Runtime {
                 }
                 thread::sleep(Duration::from_millis(40));
             }
-            for (_, worker) in workers {
+            remote.take();
+            for (stop, _) in workers.values() {
+                stop.store(true, Ordering::Relaxed);
+            }
+            for (_, (_, worker)) in workers {
                 let _ = worker.join();
             }
         }));
@@ -890,6 +1168,7 @@ fn start_device(
                     key_size: kind.key_image_format().size,
                     tile_updates: HashMap::new(),
                     frame_clock: Instant::now(),
+                    low_fps: false,
                     written_tiles: 0,
                     written_bytes: 0,
                     write_time_us: 0,
@@ -914,6 +1193,7 @@ fn start_device(
             };
             let mut previous = u64::MAX;
             let mut cached_config = None;
+            let mut capacity = WorkCapacity::default();
             while !render_stop.load(Ordering::Relaxed) {
                 let (available, config) = {
                     let engine = render_shared.lock().unwrap_or_else(|p| p.into_inner());
@@ -945,14 +1225,33 @@ fn start_device(
                 }
                 if let Some(config) = config {
                     previous = config.revision;
+                    let started = Instant::now();
+                    let target_fps = config.max_fps;
                     match renderer.render_shared(kind, config) {
                         Ok(frame) => {
+                            let work = started.elapsed();
+                            let interval = renderer
+                                .next_deadline()
+                                .map(|deadline| deadline.saturating_duration_since(started));
+                            let target = interval
+                                .filter(|interval| !interval.is_zero())
+                                .map(|interval| {
+                                    (1. / interval.as_secs_f64())
+                                        .round()
+                                        .clamp(1., f64::from(target_fps))
+                                        as u32
+                                })
+                                .unwrap_or(target_fps);
+                            let low_fps = renderer.animated && capacity.record(work, target);
                             let frame = Arc::new(frame);
                             let mut engine =
                                 render_shared.lock().unwrap_or_else(|p| p.into_inner());
                             let mut pixels_changed = false;
                             let mut revision_changed = false;
+                            let mut warning_changed = false;
                             if let Some(device) = engine.devices.get_mut(&render_serial) {
+                                warning_changed = device.low_fps != low_fps;
+                                device.low_fps = low_fps;
                                 revision_changed = device
                                     .frame
                                     .as_ref()
@@ -976,7 +1275,7 @@ fn start_device(
                             if pixels_changed || revision_changed {
                                 render_slot.publish(frame, !fake);
                             }
-                            if pixels_changed {
+                            if pixels_changed || warning_changed {
                                 engine.frame_ready.notify();
                             }
                         }
@@ -1614,18 +1913,25 @@ fn action_loop(shared: Shared, events: Receiver<InputEvent>, stop: Arc<AtomicBoo
                 let canonical =
                     crate::builtins::resolve(action, "press").unwrap_or_else(|_| action.clone());
                 if canonical["id"] == "native::shell"
+                    && !action["event-assignments"].is_object()
                     && canonical["settings"]["auto_run"].as_f64().unwrap_or(0.0) > 0.0
                 {
                     return event.event == "release" && !was_long;
                 }
                 if canonical["id"] == "native::mixer"
+                    && !action["event-assignments"].is_object()
                     && canonical["settings"]["operation"] == "mute"
                     && event.family == "dials"
                     && action["event"] == "release"
                 {
                     return event.event == "release" && !was_long;
                 }
-                crate::builtins::event_matches(action, &event.event)
+                crate::builtins::assigned_event_matches(
+                    action,
+                    &event.family,
+                    &event.event,
+                    was_long,
+                )
             })
             .collect::<Vec<_>>();
         if selected.is_empty() {
@@ -2192,7 +2498,9 @@ fn run_action(
                 }
                 processes.insert(plugin_id.into(), plugin::Process::start(&installed)?);
             }
-            let result=processes.get_mut(plugin_id).unwrap().call("event",json!({"action":action_id,"event":event.event,"value":event.value,"serial":event.serial,"input":{"family":event.family,"id":event.input},"settings":settings}));
+            let plugin_settings =
+                shared.lock().unwrap().docs.settings["plugins"][plugin_id].clone();
+            let result=processes.get_mut(plugin_id).unwrap().call("event",json!({"plugin_settings":plugin_settings,"action":action_id,"event":event.event,"value":event.value,"serial":event.serial,"input":{"family":event.family,"id":event.input},"settings":settings}));
             let response = match result {
                 Ok(v) => v,
                 Err(e) => {
@@ -2281,6 +2589,101 @@ pub fn fake_kind(name: &str) -> Result<Kind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn whole_page_edits_target_the_named_page_and_leave_main_untouched() {
+        let root = tempfile::tempdir().unwrap();
+        let shared = Engine::open(root.path().into()).unwrap();
+        let mut engine = shared.lock().unwrap();
+        let main = engine.docs.pages["Main"].clone();
+        let document =
+            json!({"unknown":"keep", "background":{"view":{"x":0.25,"y":0.75,"scale":2.}}});
+        engine
+            .command(&json!({"method":"put-page","params":{"name":"Work","document":document}}))
+            .unwrap();
+        assert_eq!(engine.docs.pages["Work"], document);
+        assert_eq!(engine.docs.pages["Main"], main);
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("pages/Work.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved, document);
+        engine
+            .command(
+                &json!({"method":"put-page","params":{"page":"Work","document":{"updated":true}}}),
+            )
+            .unwrap();
+        assert_eq!(engine.docs.pages["Work"]["updated"], true);
+        assert_eq!(engine.docs.pages["Main"], main);
+    }
+    #[test]
+    fn fps_warning_uses_bounded_median_work_and_resets_on_rate_changes() {
+        let mut monitor = WorkCapacity::default();
+        for _ in 0..60 {
+            assert!(!monitor.record(Duration::from_millis(1), 30));
+        }
+        // A single decoding spike must not trigger the warning.
+        assert!(!monitor.record(Duration::from_secs(1), 30));
+        for _ in 0..90 {
+            monitor.record(Duration::from_millis(60), 30);
+        }
+        assert!(monitor.low);
+        assert_eq!(monitor.samples.len(), 60);
+        assert!(!monitor.record(Duration::from_millis(60), 10));
+        for _ in 0..40 {
+            assert!(!monitor.record(Duration::from_millis(60), 10));
+        }
+        assert_eq!(monitor.samples.len(), 20);
+    }
+    #[test]
+    fn fake_deck_preferences_resize_live_workers_and_crop_previews_do_not_save() {
+        let root = tempfile::tempdir().unwrap();
+        let shared = Engine::open(root.path().into()).unwrap();
+        {
+            let mut engine = shared.lock().unwrap();
+            engine.docs.put("Main", json!({"background":{"media-path":"wallpaper.png", "view":{"x":0.5,"y":0.5,"scale":1.},"media-paths":[{"path":"wallpaper.png","unknown":"keep"}]}})).unwrap();
+        }
+        let runtime = Runtime::start(shared.clone(), vec![Kind::Plus], false).unwrap();
+        wait_for(&shared, |e| e.devices.len() == 1);
+        let disk = std::fs::read(root.path().join("pages/Main.json")).unwrap();
+        {
+            let mut engine = shared.lock().unwrap();
+            let view = json!({"x":0.25,"y":0.75,"scale":2.});
+            engine.preview_background_view("page:Main", "wallpaper.png", view.clone());
+            let config = engine.config("FAKE-PLUS-0").unwrap();
+            assert_eq!(config.page["background"]["view"], view);
+            assert_eq!(config.page["background"]["media-paths"][0]["view"], view);
+            assert_eq!(
+                config.page["background"]["media-paths"][0]["unknown"],
+                "keep"
+            );
+            assert_eq!(
+                std::fs::read(root.path().join("pages/Main.json")).unwrap(),
+                disk
+            );
+            engine.clear_background_view_preview("page:Main");
+            assert_eq!(
+                engine.config("FAKE-PLUS-0").unwrap().page["background"]["view"]["x"],
+                0.5
+            );
+            let mut settings = engine.docs.settings.clone();
+            settings["dev"]["n-fake-decks"] = json!(3);
+            engine
+                .command(&json!({"method":"put-settings","params":settings}))
+                .unwrap();
+        }
+        wait_for(&shared, |e| {
+            e.devices.len() == 3 && e.devices.values().all(|d| d.frame.is_some())
+        });
+        {
+            let mut engine = shared.lock().unwrap();
+            let mut settings = engine.docs.settings.clone();
+            settings["dev"]["n-fake-decks"] = json!(0);
+            engine
+                .command(&json!({"method":"put-settings","params":settings}))
+                .unwrap();
+        }
+        wait_for(&shared, |e| e.devices.is_empty());
+        drop(runtime);
+    }
     fn wait_for(shared: &Shared, predicate: impl Fn(&Engine) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while !predicate(&shared.lock().unwrap()) {

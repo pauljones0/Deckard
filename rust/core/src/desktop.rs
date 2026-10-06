@@ -406,6 +406,89 @@ pub fn focused_window() -> Option<(String, String)> {
     }
     None
 }
+/// Enumerate windows for the upstream page-rule preview without GTK or Python.
+pub fn windows() -> Vec<(String, String)> {
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_lowercase();
+    if desktop.contains("hyprland") {
+        if let Some(output) = query(&["hyprctl", "clients", "-j"])
+            && let Ok(value) = serde_json::from_str::<Value>(&output)
+            && let Some(windows) = value.as_array()
+        {
+            return windows
+                .iter()
+                .filter_map(|w| {
+                    Some((
+                        w["class"].as_str()?.into(),
+                        w["title"].as_str().unwrap_or("").into(),
+                    ))
+                })
+                .collect();
+        }
+    } else if desktop.contains("gnome") {
+        if let Some(output) = query(&[
+            "busctl",
+            "--user",
+            "--json=short",
+            "call",
+            "org.gnome.Shell",
+            "/org/gnome/Shell/Extensions/StreamController",
+            "org.gnome.Shell.Extensions.StreamController",
+            "GetAllWindows",
+        ]) && let Ok(reply) = serde_json::from_str::<Value>(&output)
+            && let Some(data) = reply["data"][0].as_str()
+            && let Ok(value) = serde_json::from_str::<Value>(data)
+            && let Some(windows) = value.as_array()
+        {
+            return windows
+                .iter()
+                .filter_map(|w| {
+                    Some((
+                        w["wm_class"].as_str()?.into(),
+                        w["title"].as_str().unwrap_or("").into(),
+                    ))
+                })
+                .collect();
+        }
+    } else if desktop.contains("sway") {
+        if let Some(output) = query(&["swaymsg", "-t", "get_tree"])
+            && let Ok(value) = serde_json::from_str::<Value>(&output)
+        {
+            fn visit(value: &Value, out: &mut Vec<(String, String)>) {
+                if let Some(class) = value["app_id"]
+                    .as_str()
+                    .or_else(|| value["window_properties"]["class"].as_str())
+                {
+                    out.push((class.into(), value["name"].as_str().unwrap_or("").into()));
+                }
+                for key in ["nodes", "floating_nodes"] {
+                    if let Some(nodes) = value[key].as_array() {
+                        for node in nodes {
+                            visit(node, out);
+                        }
+                    }
+                }
+            }
+            let mut windows = Vec::new();
+            visit(&value, &mut windows);
+            return windows;
+        }
+    } else if std::env::var("XDG_SESSION_TYPE").is_ok_and(|s| s == "x11")
+        && let Some(ids) = query(&["xdotool", "search", "--onlyvisible", "--name", ".*"])
+    {
+        return ids
+            .lines()
+            .take(256)
+            .filter_map(|id| {
+                let class = query(&["xprop", "-id", id, "WM_CLASS"])?;
+                let title = query(&["xdotool", "getwindowname", id]).unwrap_or_default();
+                Some((class.split('"').nth(3).unwrap_or("").into(), title))
+            })
+            .collect();
+    }
+    focused_window().into_iter().collect()
+}
 fn locked() -> Option<bool> {
     if let Ok(session) = std::env::var("XDG_SESSION_ID") {
         return query(&[
@@ -530,6 +613,75 @@ impl MangoSocket {
     }
 }
 
+fn idle_duration() -> Option<Duration> {
+    // Mutter and KDE report elapsed idle time directly. logind supplies a
+    // monotonic timestamp, so wall-clock adjustments cannot trigger a pause.
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_lowercase();
+    let remote = if desktop.contains("gnome") {
+        query(&[
+            "busctl",
+            "--user",
+            "--json=short",
+            "call",
+            "org.gnome.Mutter.IdleMonitor",
+            "/org/gnome/Mutter/IdleMonitor/Core",
+            "org.gnome.Mutter.IdleMonitor",
+            "GetIdletime",
+        ])
+    } else if desktop.contains("kde") {
+        query(&[
+            "busctl",
+            "--user",
+            "--json=short",
+            "call",
+            "org.freedesktop.ScreenSaver",
+            "/ScreenSaver",
+            "org.freedesktop.ScreenSaver",
+            "GetSessionIdleTime",
+        ])
+    } else {
+        None
+    };
+    if let Some(value) = remote.and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        && let Some(time) = value["data"][0].as_u64().or_else(|| value["data"].as_u64())
+    {
+        return Some(if desktop.contains("gnome") {
+            Duration::from_millis(time)
+        } else {
+            Duration::from_secs(time)
+        });
+    }
+    let session = std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "self".into());
+    let properties = query(&[
+        "loginctl",
+        "show-session",
+        &session,
+        "-p",
+        "IdleHint",
+        "-p",
+        "IdleSinceHintMonotonic",
+    ])?;
+    if !properties.lines().any(|s| s == "IdleHint=yes") {
+        return Some(Duration::ZERO);
+    }
+    let since = properties.lines().find_map(|s| {
+        s.strip_prefix("IdleSinceHintMonotonic=")?
+            .parse::<u64>()
+            .ok()
+    })?;
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: a valid writable timespec and the monotonic clock are provided.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) } != 0 {
+        return None;
+    }
+    let now = (now.tv_sec as u64).saturating_mul(1_000_000) + now.tv_nsec as u64 / 1000;
+    Some(Duration::from_micros(now.saturating_sub(since)))
+}
 pub fn watch(shared: Shared, stop: Arc<AtomicBool>) {
     let mut last_focus = None;
     let mut auto_pages = std::collections::HashMap::<String, (String, String, bool)>::new();
@@ -540,7 +692,7 @@ pub fn watch(shared: Shared, stop: Arc<AtomicBool>) {
         .to_lowercase()
         .contains("mango");
     while !stop.load(Ordering::Relaxed) {
-        let (rules, autolock) = {
+        let (rules, autolock, idle_pause, idle_delay) = {
             let engine = shared.lock().unwrap_or_else(|p| p.into_inner());
             let mut rules = engine.docs.settings["rules"]
                 .as_array()
@@ -564,6 +716,14 @@ pub fn watch(shared: Shared, stop: Arc<AtomicBool>) {
             (
                 rules,
                 engine.docs.settings["auto_lock"].as_bool().unwrap_or(true),
+                engine.docs.settings["animation_pause_mode"].as_str() == Some("system-idle"),
+                Duration::from_secs(
+                    engine.docs.settings["animation_idle_minutes"]
+                        .as_u64()
+                        .unwrap_or(5)
+                        .clamp(1, 120)
+                        * 60,
+                ),
             )
         };
         let mango_event = if is_mango && !rules.is_empty() {
@@ -573,7 +733,22 @@ pub fn watch(shared: Shared, stop: Arc<AtomicBool>) {
             None
         };
         if tick % 20 == 0 || mango_event.is_some() {
-            if autolock && let Some(locked) = locked() {
+            let locked = if autolock || idle_pause {
+                locked()
+            } else {
+                None
+            };
+            if idle_pause {
+                let paused =
+                    locked.unwrap_or(false) || idle_duration().is_some_and(|d| d >= idle_delay);
+                let mut engine = shared.lock().unwrap();
+                if engine.animations_idle != paused {
+                    engine.animations_idle = paused;
+                    engine.generation = engine.generation.wrapping_add(1);
+                    engine.frame_ready.notify();
+                }
+            }
+            if autolock && let Some(locked) = locked {
                 let mut engine = shared.lock().unwrap();
                 if engine.locked != locked {
                     engine.locked = locked;
@@ -643,6 +818,11 @@ pub fn watch(shared: Shared, stop: Arc<AtomicBool>) {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+/// Validate and evaluate the same expressions used by automatic page rules.
+pub fn pattern_matches(pattern: &str, value: &str) -> Result<bool> {
+    Ok(regex::Regex::new(pattern)?.is_match(value))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -43,7 +43,32 @@ fn data_path(explicit: Option<PathBuf>) -> Result<PathBuf> {
             }
         }
     }
-    Ok(deckard_core::persistence::resolve(&root)?)
+    let mut root = deckard_core::persistence::resolve(&root)?;
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..16 {
+        ensure!(
+            seen.insert(root.clone()),
+            "Data path settings contain a cycle"
+        );
+        let Some(next) = std::fs::read(root.join("settings/native.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|s| {
+                s["data_path"]
+                    .as_str()
+                    .filter(|p| !p.trim().is_empty())
+                    .map(PathBuf::from)
+            })
+        else {
+            return Ok(root);
+        };
+        let next = deckard_core::persistence::resolve(&next)?;
+        if next == root {
+            return Ok(root);
+        }
+        root = next;
+    }
+    anyhow::bail!("Data path settings exceed sixteen redirects")
 }
 fn copy_tree(source: &Path, target: &Path) -> Result<()> {
     std::fs::create_dir_all(target)?;

@@ -25,6 +25,12 @@ pub struct Manifest {
     #[serde(default)]
     pub source: String,
     pub actions: Vec<Action>,
+    #[serde(default)]
+    pub settings: Vec<Field>,
+    #[serde(default)]
+    pub assets: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub colors: std::collections::BTreeMap<String, Value>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Action {

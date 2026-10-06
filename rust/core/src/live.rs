@@ -360,7 +360,7 @@ fn system_loop(shared: &Shared, list: &Mutex<Arc<Vec<Action>>>) {
         for a in actions.iter() {
             let s = &a.action["settings"];
             let id = a.action["id"].as_str().unwrap_or("");
-            let value = if id == "native::system" {
+            let mut value = if id == "native::system" {
                 match s["metric"].as_str().unwrap_or("CPU") {
                     "CPUTemp" => {
                         let unit = s["unit"].as_str().unwrap_or("C");
@@ -413,6 +413,37 @@ fn system_loop(shared: &Shared, list: &Mutex<Arc<Vec<Action>>>) {
             } else {
                 json!({"visual":{"symbol":id.trim_start_matches("native::"),"active":true}})
             };
+            let raw = a.raw["id"].as_str().unwrap_or("");
+            let artwork = match id {
+                "native::url" => Some(("OSPlugin/web.png", 1.)),
+                "native::shell" | "native::command" => Some(("OSPlugin/terminal.png", 1.)),
+                "native::text" | "native::hotkey" => Some(("OSPlugin/keyboard.png", 1.)),
+                "native::delay" => Some(("OSPlugin/hourglass_empty-inv.png", 0.8)),
+                "native::page" => Some(("DeckPlugin/folder.png", 1.)),
+                "native::previous-page" => Some(("DeckPlugin/go_to_previous_page.png", 1.)),
+                "native::sleep" => Some(("DeckPlugin/sleep.png", 1.)),
+                "native::brightness" => Some(("DeckPlugin/light.png", 1.)),
+                "native::adjust-brightness" => Some((
+                    if s["adjust"].as_f64().unwrap_or(0.) < 0. {
+                        "DeckPlugin/decrease_brightness.png"
+                    } else {
+                        "DeckPlugin/increase_brightness.png"
+                    },
+                    1.,
+                )),
+                _ if raw.ends_with("-Click") => Some(("OSPlugin/click.png", 0.75)),
+                _ if raw.ends_with("-Hotkey") || raw.ends_with("-EasyHotkey") => {
+                    Some(("OSPlugin/keyboard.png", 1.))
+                }
+                _ if raw.ends_with("-MoveXY") => Some(("OSPlugin/mouse.png", 1.)),
+                _ => None,
+            };
+            if let Some((path, size)) = artwork {
+                value["media"] = json!({"path":format!("builtin://{path}"),"size":size});
+                if let Some(object) = value.as_object_mut() {
+                    object.remove("visual");
+                }
+            }
             overlay(shared, a, value);
         }
         let _ = crate::desktop::wait(Duration::from_secs(1));
@@ -773,6 +804,24 @@ fn media_loop(shared: &Shared, list: &Mutex<Arc<Vec<Action>>>) {
                     .filter(|p| !p.is_empty() && Path::new(p).is_file())
                 {
                     value["media"] = json!({"path":path});
+                }
+            }
+            if value["media"].is_null() && value["visual"]["artwork"].is_null() {
+                let icon = match kind {
+                    "PlayPause" => Some(if player.is_some_and(|p| p.status == "Playing") {
+                        "pause"
+                    } else {
+                        "play"
+                    }),
+                    "Next" => Some("next"),
+                    "Previous" => Some("previous"),
+                    "Stop" => Some("stop"),
+                    _ => None,
+                };
+                if let Some(icon) = icon {
+                    value["media"] =
+                        json!({"path":format!("builtin://MediaPlugin/{icon}.png"),"size":0.8});
+                    value.as_object_mut().unwrap().remove("visual");
                 }
             }
             overlay(shared, a, value);

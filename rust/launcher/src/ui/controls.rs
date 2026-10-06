@@ -91,6 +91,8 @@ pub(super) fn color(
 pub(super) fn button(title: &str, icon: &str, callback: impl Fn() + 'static) -> gtk::Button {
     let button = if title.is_empty() {
         gtk::Button::from_icon_name(icon)
+    } else if icon.is_empty() {
+        gtk::Button::with_label(title)
     } else {
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         content.set_halign(gtk::Align::Center);
@@ -152,106 +154,6 @@ pub(super) fn file_row(
     row
 }
 
-impl Ui {
-    pub(super) fn bind_text(
-        self: &Rc<Self>,
-        title: &str,
-        path: &[&str],
-        default: &str,
-    ) -> adw::EntryRow {
-        let selection = self.selection.borrow().clone();
-        let keys = path.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-        let value = get_path(&self.draft.borrow(), path)
-            .as_str()
-            .unwrap_or(default)
-            .to_owned();
-        let weak = Rc::downgrade(self);
-        let row = text(title, &value, move |v| {
-            if let Some(ui) = weak.upgrade() {
-                ui.edit(selection.clone(), keys.clone(), json!(v));
-            }
-        });
-        row.set_widget_name(&path.join("/"));
-        row
-    }
-    pub(super) fn bind_number(
-        self: &Rc<Self>,
-        title: &str,
-        path: &[&str],
-        default: f64,
-        min: f64,
-        max: f64,
-        step: f64,
-    ) -> adw::ActionRow {
-        let selection = self.selection.borrow().clone();
-        let keys = path.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-        let value = get_path(&self.draft.borrow(), path)
-            .as_f64()
-            .unwrap_or(default);
-        let weak = Rc::downgrade(self);
-        number(title, value, min, max, step, move |v| {
-            if let Some(ui) = weak.upgrade() {
-                ui.edit(
-                    selection.clone(),
-                    keys.clone(),
-                    if step >= 1. {
-                        json!(v as i64)
-                    } else {
-                        json!(v)
-                    },
-                );
-            }
-        })
-    }
-    pub(super) fn bind_toggle(
-        self: &Rc<Self>,
-        title: &str,
-        path: &[&str],
-        default: bool,
-    ) -> adw::SwitchRow {
-        let selection = self.selection.borrow().clone();
-        let keys = path.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-        let value = get_path(&self.draft.borrow(), path)
-            .as_bool()
-            .unwrap_or(default);
-        let weak = Rc::downgrade(self);
-        toggle(title, value, move |v| {
-            if let Some(ui) = weak.upgrade() {
-                ui.edit(selection.clone(), keys.clone(), json!(v));
-            }
-        })
-    }
-    pub(super) fn bind_color(
-        self: &Rc<Self>,
-        title: &str,
-        path: &[&str],
-        default: [u8; 4],
-    ) -> adw::ActionRow {
-        let selection = self.selection.borrow().clone();
-        let keys = path.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-        let value = render::color(get_path(&self.draft.borrow(), path), default);
-        let weak = Rc::downgrade(self);
-        color(title, value, move |v| {
-            if let Some(ui) = weak.upgrade() {
-                ui.edit(selection.clone(), keys.clone(), v);
-            }
-        })
-    }
-    pub(super) fn bind_file(self: &Rc<Self>, title: &str, path: &[&str]) -> adw::EntryRow {
-        let selection = self.selection.borrow().clone();
-        let keys = path.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-        let value = get_path(&self.draft.borrow(), path)
-            .as_str()
-            .unwrap_or("")
-            .to_owned();
-        let weak = Rc::downgrade(self);
-        file_row(&self.window, title, &value, move |v| {
-            if let Some(ui) = weak.upgrade() {
-                ui.edit(selection.clone(), keys.clone(), json!(v));
-            }
-        })
-    }
-}
 pub(super) fn get_path<'a>(value: &'a Value, path: &[&str]) -> &'a Value {
     path.iter().fold(value, |v, key| &v[*key])
 }

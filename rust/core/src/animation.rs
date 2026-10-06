@@ -28,6 +28,7 @@ pub struct GifPlayer {
     pub fps: u32,
     sample: Instant,
     finished: bool,
+    paused_at: Option<Instant>,
 }
 impl GifPlayer {
     fn decoder(path: &Path) -> Result<gif::Decoder<BufReader<File>>> {
@@ -63,10 +64,23 @@ impl GifPlayer {
             fps: 100,
             sample: Instant::now(),
             finished: false,
+            paused_at: None,
         })
     }
     pub fn running(&self) -> bool {
-        !self.finished
+        !self.finished && self.paused_at.is_none()
+    }
+    pub fn set_paused(&mut self, paused: bool) {
+        self.set_paused_at(paused, Instant::now());
+    }
+    fn set_paused_at(&mut self, paused: bool, now: Instant) {
+        if paused {
+            self.paused_at.get_or_insert(now);
+        } else if let Some(started) = self.paused_at.take() {
+            let duration = now.saturating_duration_since(started);
+            self.deadline += duration;
+            self.sample += duration;
+        }
     }
     pub fn next_deadline(&self) -> Option<Instant> {
         self.running().then_some(self.deadline.max(self.sample))
@@ -82,6 +96,12 @@ impl GifPlayer {
         self.deadline = deadline;
     }
     pub fn tick(&mut self, now: Instant) -> Result<&RgbaImage> {
+        if self.paused_at.is_some() {
+            if self.sequence == 0 {
+                self.advance()?;
+            }
+            return Ok(&self.canvas);
+        }
         if self.finished || now < self.deadline {
             return Ok(&self.canvas);
         }
@@ -202,6 +222,7 @@ pub struct VideoPlayer {
     memory: usize,
     interval: Duration,
     stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     reader: Option<std::thread::JoinHandle<()>>,
 }
 impl VideoPlayer {
@@ -274,10 +295,23 @@ impl VideoPlayer {
         let slot = frame.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let reader_stop = stop.clone();
+        let paused = Arc::new(AtomicBool::new(false));
+        let reader_paused = paused.clone();
         let reader = std::thread::spawn(move || {
             let mut sequence = 0;
             let mut clock = Instant::now();
             loop {
+                if sequence > 0 && reader_paused.load(Ordering::Relaxed) {
+                    while reader_paused.load(Ordering::Relaxed)
+                        && !reader_stop.load(Ordering::Relaxed)
+                    {
+                        std::thread::park();
+                    }
+                    clock = Instant::now();
+                }
+                if reader_stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 let mut bytes = vec![0; (width * height * 4) as usize];
                 if output.read_exact(&mut bytes).is_err() {
                     break;
@@ -294,6 +328,19 @@ impl VideoPlayer {
                     if reader_stop.load(Ordering::Relaxed) {
                         break;
                     }
+                }
+                // A pause can arrive while read/pacing is already in progress.
+                // Hold that one bounded frame instead of publishing past pause.
+                if sequence > 0 && reader_paused.load(Ordering::Relaxed) {
+                    while reader_paused.load(Ordering::Relaxed)
+                        && !reader_stop.load(Ordering::Relaxed)
+                    {
+                        std::thread::park();
+                    }
+                    clock = Instant::now();
+                }
+                if reader_stop.load(Ordering::Relaxed) {
+                    break;
                 }
                 sequence += 1;
                 let Some(pixels) = RgbaImage::from_raw(width, height, bytes) else {
@@ -312,11 +359,19 @@ impl VideoPlayer {
             memory: (width * height * 12) as usize,
             interval,
             stop,
+            paused,
             reader: Some(reader),
         })
     }
     pub fn memory(&self) -> usize {
         self.memory
+    }
+    pub fn set_paused(&self, paused: bool) {
+        if self.paused.swap(paused, Ordering::Relaxed) != paused
+            && let Some(reader) = &self.reader
+        {
+            reader.thread().unpark();
+        }
     }
     pub fn running(&self) -> bool {
         if let Ok(mut child) = self.child.lock() {
@@ -409,6 +464,19 @@ mod tests {
         assert_eq!(player.sequence, sequence);
         player.tick(deadline).unwrap();
         assert!(player.sequence > sequence);
+        let sequence = player.sequence;
+        let pause = player.next_deadline().unwrap() - Duration::from_millis(1);
+        player.set_paused_at(true, pause);
+        assert!(player.next_deadline().is_none());
+        player.tick(pause + Duration::from_secs(30)).unwrap();
+        assert_eq!(player.sequence, sequence);
+        player.set_paused_at(false, pause + Duration::from_secs(30));
+        let resume = player.next_deadline().unwrap();
+        assert!(resume >= pause + Duration::from_secs(30));
+        player.tick(resume - Duration::from_micros(1)).unwrap();
+        assert_eq!(player.sequence, sequence);
+        player.tick(resume).unwrap();
+        assert!(player.sequence > sequence && player.sequence < sequence + 10);
     }
     #[test]
     fn fractional_video_rate_and_nonlooping_reader_preserve_final_frames() {

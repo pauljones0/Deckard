@@ -1,11 +1,9 @@
-Deckard 0.9.1 restores the previous GTK4/libadwaita editor, implemented entirely in Rust.
+Deckard 0.10.0 reconstructs the direct upstream GTK4/libadwaita interface in Rust.
 
-The original window proportions, header bars, state selector, selected-input preview, key grid, touch strip, dials and grouped settings return. GTK dialogs cover pages, assets, store, device settings, OBS connections, automatic switching and migration. All 56 native replacements for the common upstream plugin actions remain available; executable native plugins receive GTK forms from their field schemas.
+The original stylesheet, window proportions, headers, key/dial/touchstrip selection, state controls, layout/background/label editors, action chooser, event assignments, asset manager, page manager and seven settings pages return. Common actions use their original names and artwork. All 56 common-plugin replacements run natively, and the replacement plugin interface supplies settings, icons and colors without Python widgets.
 
-The selected preview opens the asset picker, with hover hints and image removal. Right-click input menus provide copy, cut, paste and clear. Closing to the tray releases the window surface and renderer, which are recreated on reopening.
+Crop dragging previews immediately and commits through the serialized save worker. Backgrounds, slideshows, saturation, rolling labels, idle animation pause, tray visibility, fake decks and remote decks use native implementations. Unknown document fields survive edits. Regression checks cover named-page saves, pause/resume, action ownership, native resolution and GTK interactions.
 
-Saved edits retain unknown JSON and the selected input at the time of editing. Pending writes drain on exit. Preview textures share engine RGB buffers, update only when pixels change and are released while hidden. Searchable asset pages keep 40 scaled thumbnails at a time. Touchscreen state backgrounds and animations now reach the native strip.
+Matched captures compare the real direct upstream with the Rust application under identical GTK/font/fixture conditions. Several screens are pixel-identical. Small deck-text raster differences and runtime-specific identifiers are documented; this release does not claim universal pixel identity across devices, fonts or desktop themes.
 
-Installers target CachyOS x86-64, Fedora 44 stable and Ubuntu 26.04 LTS on x86-64 and ARM64. GTK, libadwaita, FFmpeg and desktop helpers come from the package manager. No Python runtime or system-library bundle is included. The old AppImage/portable releases remain available under v0.8.0.
-
-Each target runs native tests, GTK interaction checks, Clippy, formatting, rendering/audio diagnostics and installation/startup checks on a fresh distribution image before publication. Fake-device throughput does not establish physical USB/LCD performance.
+Installers target CachyOS x86-64, Fedora 44 stable and Ubuntu 26.04 LTS on x86-64 and ARM64. GTK, libadwaita, FFmpeg and helpers come from the package manager. No Python runtime or system-library bundle is included. Every target runs native tests, GTK checks, Clippy and fresh-image installation checks before publication.

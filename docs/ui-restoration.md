@@ -1,30 +1,27 @@
-# GTK editor, in Rust
+# Direct-upstream GTK interface, in Rust
 
-Deckard uses GTK4 and libadwaita through their Rust bindings. The previous layout, stylesheet and controls are restored; the application and executable plugins use Rust. No Python interpreter is loaded or packaged.
+The reference is [nazbert/Deckard `a3609c7d`](https://github.com/nazbert/Deckard/tree/a3609c7de63347dbc7e031926826898950600c83). Deckard uses its stylesheet and reconstructs its GTK4/libadwaita widgets in Rust. The engine, editor and shipped common-plugin replacements run without Python. GTK, GLib, Pango, Cairo and libadwaita are system libraries.
 
-![Rust GTK editor](images/native-editor.png)
+![Rust editor](images/native-editor.png)
 
-The editor retains the paired header bars, 40% left sidebar, state switcher, selected-input preview, grouped controls, action chooser and dialogs. Keys display at 75 logical pixels; the selected preview is 175. Device frames retain their native resolution independently of those display sizes.
+The paired headers, 40% sidebar, state selector, selected-input preview, key grid, dials, touchstrip, grouped controls, action chooser and event assignments follow the reference. The asset manager, page manager, deck settings and seven preferences pages use the same layout and captions. Native plugin settings use declared fields, icons and colors instead of Python widget factories.
 
-Pages, assets, store, device settings, OBS connections, automatic switching, migration and optional AI review use GTK controls. Layout, background, labels and action properties save through the Rust engine. Unknown JSON fields survive edits. Clicking the large preview opens asset selection; hover controls remove its image. Inputs provide right-click menus and clipboard shortcuts. The common upstream actions and native plugin field schemas supply their settings forms.
+## What was checked
 
-## Rendering and lifecycle
+`benchmarks/ui_parity.py` launches the actual reference and Rust applications with isolated data, identical fonts, GTK renderer, window sizes and fake Plus fixtures. It records screenshots, mapped widget bounds and pixel differences. The populated chooser loads all five reference plugins, using a private null-sink audio server and the reference OBS dependencies; a failed plugin startup cannot silently pass that comparison.
 
-GTK stays on the main thread. A bounded worker serializes saved edits, carrying the selected device, page, input and state with each command. Network requests run separately. Structural settings changes update their lists after persistence; closing the application drains pending edits.
+UI settings, performance settings, custom assets, icon-pack chooser, page manager and the no-device screen match pixel-for-pixel in the recorded fixture. The main screen differs in about 0.30% of pixels, concentrated in deck-text rendering. Python/Pillow and Rust/ab_glyph rasterize those labels differently. Fake serials and isolated data paths also differ. These checks establish the recorded layouts, not universal pixel identity for every font, plugin panel, theme or system library version. [Capture evidence](../benchmarks/results/2026-10-06/gtk-0.10/ui-comparison.json) · [Reference screenshot](images/gtk-editor-reference.png).
 
-Previews wrap the engine's shared RGB buffers in `glib::Bytes` and `gdk::MemoryTexture`. They do not decode device JPEGs. Unchanged textures are reused, only the selected device receives preview updates, and closing to the tray releases textures and the native window surface/renderer. Reopening recreates them and restores frames. The preview cadence is capped around 60 Hz; device rendering and USB pacing retain their independent source/model rates.
-
-Asset browsing uses search and pages of 40 scaled thumbnails. GTK, GLib, Pango, Cairo and libadwaita are supplied by the distribution. egui, eframe, wgpu and rfd were removed from the launcher.
-
-## Verification
-
-The GTK workflow test exercises key/dial selection, native frame dimensions, saved labels, unknown-field preservation, state creation/removal, action selection, device switching, settings lists, OBS profile creation/deletion, slideshow deletion, dialogs and close/reopen behavior. It verifies GTK/libadwaita mappings and the absence of libpython.
+The GTK workflow test covers actual selection, edits, state changes, action selection, device switching, settings, OBS profile creation/deletion, slideshows, dialogs and close/reopen. It checks native frame dimensions, unknown-field preservation and GTK/libadwaita mappings without libpython.
 
 ```sh
-dbus-run-session -- xvfb-run -a env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-criticals \
+dbus-run-session -- xvfb-run -a -s '-screen 0 1800x1000x24' \
+  env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-criticals \
   cargo test -p deckard gtk_editor_workflows --locked -- --ignored --test-threads=1
 ```
 
-This runs on X11 in every distro builder; a private Wayland session covers local interactions and screenshots. Existing engine, IPC, plugin and rendering tests remain. Physical USB devices and every desktop portal backend require testing on their respective systems.
+## Resource use
 
-[Source](../rust/launcher/src/ui/mod.rs) · [Previous GTK reference](images/gtk-editor-reference.png) · [Packages](linux-builds.md) · [Measurements](performance.md)
+GTK stays on the main thread. Saved edits use a serialized worker that captures the document/input/state being edited. Crop dragging previews in memory; committed edits retain unknown fields. Native frame buffers are shared with GTK textures, unchanged previews are reused and only the selected device is painted. Closing to the tray releases textures and the window surface. Asset pages retain at most 50 scaled thumbnails. Static label rasters, rolling labels, media and encoded frames have bounded caches. Idle animation pause stops GIF, video and slideshow updates without a resume burst.
+
+[Packages](linux-builds.md) · [Measurements](performance.md) · [Source](../rust/launcher/src/ui/mod.rs)

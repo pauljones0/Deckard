@@ -169,18 +169,24 @@ def start_compositor(args, name):
     bundle = args.weston_bundle.resolve()
     lib = bundle / "usr/lib"
     config = args.output / "weston.ini"
-    config.write_text("[core]\nshell=kiosk-shell.so\nidle-time=0\n")
+    shell = getattr(args, "weston_shell", "kiosk")
+    if shell not in ("kiosk", "desktop"):
+        raise ValueError("unsupported private Weston shell")
+    configuration = f"[core]\nshell={shell}-shell.so\nidle-time=0\n"
+    if shell == "desktop":
+        configuration += f"[shell]\nclient={lib}/weston/weston-desktop-shell\npanel-position=none\n"
+    config.write_text(configuration)
     args.wayland_runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
     env = os.environ.copy()
     env["XDG_RUNTIME_DIR"] = str(args.wayland_runtime.resolve())
     env["LD_LIBRARY_PATH"] = f"{lib}:{lib}/weston"
     env["WESTON_MODULE_MAP"] = ";".join(
         f"{module}={lib}/{directory}/{module}" for module, directory in
-        [("headless-backend.so", "libweston-15"), ("gl-renderer.so", "libweston-15"), ("kiosk-shell.so", "weston")]
+        [("headless-backend.so", "libweston-15"), ("gl-renderer.so", "libweston-15"), (f"{shell}-shell.so", "weston")]
     )
     process = subprocess.Popen(
         [str(bundle / "usr/bin/weston"), "--backend=headless", "--renderer=gl",
-         "--socket=" + args.wayland_socket, "--width=1280", "--height=800",
+         "--socket=" + args.wayland_socket, f"--width={getattr(args, 'width', 1280)}", f"--height={getattr(args, 'height', 800)}",
          "--config=" + str(config), "--log=" + str(args.output / f"{name}-weston.log")],
         env=env, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )

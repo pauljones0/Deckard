@@ -61,7 +61,7 @@
   },
   {
     "id": "OSPlugin-EasyCommand",
-    "name": "OS \u00b7 Easy Command",
+    "name": "OS \u00b7 Easy Run Command",
     "fields": [
       {
         "key": "command",
@@ -151,7 +151,7 @@
   },
   {
     "id": "OSPlugin-Launch",
-    "name": "OS \u00b7 Launch",
+    "name": "OS \u00b7 Launch App",
     "fields": [
       {
         "key": "app_path",
@@ -163,7 +163,7 @@
   },
   {
     "id": "OSPlugin-CPU_Graph",
-    "name": "OS \u00b7 CPU  Graph",
+    "name": "OS \u00b7 CPU Graph",
     "fields": [
       {
         "key": "time-period",
@@ -215,7 +215,7 @@
   },
   {
     "id": "OSPlugin-RAM_Graph",
-    "name": "OS \u00b7 RAM  Graph",
+    "name": "OS \u00b7 Memory Graph",
     "fields": [
       {
         "key": "time-period",
@@ -267,7 +267,7 @@
   },
   {
     "id": "OSPlugin-MoveXY",
-    "name": "OS \u00b7 MoveXY",
+    "name": "OS \u00b7 Move XY",
     "fields": [
       {
         "key": "x",
@@ -297,12 +297,12 @@
   },
   {
     "id": "OSPlugin-CPU",
-    "name": "OS \u00b7 CPU",
+    "name": "OS \u00b7 CPU Usage",
     "fields": []
   },
   {
     "id": "OSPlugin-RAM",
-    "name": "OS \u00b7 RAM",
+    "name": "OS \u00b7 Memory Usage",
     "fields": []
   },
   {
@@ -325,7 +325,7 @@
   },
   {
     "id": "OSPlugin-CPUTemp",
-    "name": "OS \u00b7 CPU Temp",
+    "name": "OS \u00b7 CPU Temperature",
     "fields": [
       {
         "key": "unit",
@@ -413,7 +413,7 @@
   },
   {
     "id": "DeckPlugin-ChangeBrightness",
-    "name": "Deck \u00b7 Change Brightness",
+    "name": "Deck \u00b7 Set Brightness",
     "fields": [
       {
         "key": "brightness",
@@ -515,7 +515,7 @@
   },
   {
     "id": "MediaPlugin-PlayPause",
-    "name": "Media \u00b7 Play Pause",
+    "name": "Media \u00b7 Play/Pause",
     "fields": [
       {
         "key": "player_name",
@@ -617,7 +617,7 @@
   },
   {
     "id": "MediaPlugin-Thumbnail",
-    "name": "Media \u00b7 Thumbnail",
+    "name": "Media \u00b7 Thumbnail Background",
     "fields": [
       {
         "key": "player_name",
@@ -683,7 +683,7 @@
   },
   {
     "id": "OBSPlugin-ToggleStream",
-    "name": "OBS \u00b7 Toggle Stream",
+    "name": "OBS \u00b7 Toggle Streaming",
     "fields": [
       {
         "key": "connection_id",
@@ -713,7 +713,7 @@
   },
   {
     "id": "OBSPlugin-ToggleRecord",
-    "name": "OBS \u00b7 Toggle Record",
+    "name": "OBS \u00b7 Toggle Recording",
     "fields": [
       {
         "key": "connection_id",
@@ -743,7 +743,7 @@
   },
   {
     "id": "OBSPlugin-RecPlayPause",
-    "name": "OBS \u00b7 Rec Play Pause",
+    "name": "OBS \u00b7 Play/Pause Recording",
     "fields": [
       {
         "key": "connection_id",
@@ -881,7 +881,7 @@
   },
   {
     "id": "OBSPlugin-ToggleInputMute",
-    "name": "OBS \u00b7 Toggle Input Mute",
+    "name": "OBS \u00b7 Input Mute - Toggle",
     "fields": [
       {
         "key": "input",
@@ -911,7 +911,7 @@
   },
   {
     "id": "OBSPlugin-SetInputMute",
-    "name": "OBS \u00b7 Set Input Mute",
+    "name": "OBS \u00b7 Input Mute - Set",
     "fields": [
       {
         "key": "input",
@@ -1024,7 +1024,7 @@
   },
   {
     "id": "OBSPlugin-ToggleSceneItemEnabled",
-    "name": "OBS \u00b7 Toggle Scene Item Enabled",
+    "name": "OBS \u00b7 Scene Item - Toggle",
     "fields": [
       {
         "key": "scene",
@@ -1060,7 +1060,7 @@
   },
   {
     "id": "OBSPlugin-SetSceneItemEnabled",
-    "name": "OBS \u00b7 Set Scene Item Enabled",
+    "name": "OBS \u00b7 Scene Item - Set",
     "fields": [
       {
         "key": "scene",
@@ -1126,7 +1126,7 @@
   },
   {
     "id": "OBSPlugin-ToggleSceneFilter",
-    "name": "OBS \u00b7 Toggle Scene Filter",
+    "name": "OBS \u00b7 Filter - Toggle",
     "fields": [
       {
         "key": "scene",
@@ -1162,7 +1162,7 @@
   },
   {
     "id": "OBSPlugin-SetSceneFilter",
-    "name": "OBS \u00b7 Set Scene Filter",
+    "name": "OBS \u00b7 Filter - Set",
     "fields": [
       {
         "key": "scene",
@@ -1246,7 +1246,7 @@
   },
   {
     "id": "VolumeMixer-Open",
-    "name": "VolumeMixer \u00b7 Open",
+    "name": "Volume Mixer \u00b7 Open",
     "fields": [
       {
         "key": "increments",
@@ -1258,32 +1258,32 @@
   },
   {
     "id": "VolumeMixer-Exit",
-    "name": "VolumeMixer \u00b7 Exit",
+    "name": "Volume Mixer \u00b7 Exit",
     "fields": []
   },
   {
     "id": "VolumeMixer-VolumeMute",
-    "name": "VolumeMixer \u00b7 Volume Mute",
+    "name": "Volume Mixer \u00b7 Mute",
     "fields": []
   },
   {
     "id": "VolumeMixer-VolumeUp",
-    "name": "VolumeMixer \u00b7 Volume Up",
+    "name": "Volume Mixer \u00b7 Louder",
     "fields": []
   },
   {
     "id": "VolumeMixer-VolumeDown",
-    "name": "VolumeMixer \u00b7 Volume Down",
+    "name": "Volume Mixer \u00b7 Softer",
     "fields": []
   },
   {
     "id": "VolumeMixer-MoveRight",
-    "name": "VolumeMixer \u00b7 Move Right",
+    "name": "Volume Mixer \u00b7 Move Right",
     "fields": []
   },
   {
     "id": "VolumeMixer-MoveLeft",
-    "name": "VolumeMixer \u00b7 Move Left",
+    "name": "Volume Mixer \u00b7 Move Left",
     "fields": []
   },
   {

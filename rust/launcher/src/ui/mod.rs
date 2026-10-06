@@ -1,14 +1,22 @@
 //! Native GTK/libadwaita editor. The engine and plugin API remain toolkit independent.
 mod actions;
+mod assets;
 mod bridge;
+mod capture;
+mod configuration;
 mod controls;
 mod dialogs;
 mod editor;
+mod pages;
+mod preferences;
 mod preview;
+mod search;
 mod settings;
 mod store;
 #[cfg(test)]
 mod tests;
+mod upstream_controls;
+mod viewport;
 
 use crate::editor_model::{action_definitions, set_nested};
 use adw::prelude::*;
@@ -121,13 +129,26 @@ struct Ui {
     sidebar: gtk::Stack,
     controls: gtk::Box,
     deck_stack: gtk::Stack,
+    content_stack: gtk::Stack,
+    deck_titles: gtk::Stack,
+    main_menu: gtk::MenuButton,
+    fps_banners: RefCell<HashMap<String, (adw::Banner, Cell<bool>)>>,
     page_button: gtk::MenuButton,
+    page_label: gtk::Label,
+    remove_state: gtk::Button,
+    screen_title: gtk::Label,
+    editor_scroll: gtk::ScrolledWindow,
+    editor_body: gtk::Box,
+    screen_clamp: adw::Clamp,
+    remove_icon: gtk::Button,
+    deck_settings_visible: Cell<bool>,
     deck_settings: gtk::Button,
     preview: PreviewImage,
     preview_host: gtk::Overlay,
     dial_preview: Cell<Option<(usize, u64)>>,
     state_box: gtk::Box,
     selection: RefCell<Selection>,
+    loaded_selection: RefCell<Option<Selection>>,
     draft: RefCell<Value>,
     previews: RefCell<Vec<Preview>>,
     deck_signature: RefCell<Vec<DeckSignature>>,
@@ -139,7 +160,10 @@ struct Ui {
     definitions: RefCell<Vec<(String, String, Vec<deckard_core::plugin::Field>)>>,
     choices: RefCell<Value>,
     players: RefCell<Value>,
-    catalog_dialog: RefCell<Option<adw::Dialog>>,
+    player_refreshed: Cell<std::time::Instant>,
+    catalog_dialog: RefCell<Option<gtk::Window>>,
+    auxiliary_windows: RefCell<HashMap<String, gtk::Window>>,
+    page_manager: RefCell<Option<Rc<pages::PageManager>>>,
     catalog_box: RefCell<Option<gtk::Box>>,
     capture_done: Cell<bool>,
 }
@@ -147,17 +171,25 @@ struct Ui {
 pub fn run(shared: Shared, events: SyncSender<InputEvent>, signal: Arc<AtomicBool>) -> Result<()> {
     gtk::init().context("Cannot open the GTK display; check DISPLAY or WAYLAND_DISPLAY")?;
     adw::init()?;
-    let scheme = shared.lock().unwrap().docs.settings["appearance"]
-        .as_str()
-        .unwrap_or("dark")
-        .to_owned();
+    let settings = shared.lock().unwrap().docs.settings.clone();
+    let scheme = settings["appearance"].as_str().unwrap_or("dark").to_owned();
     adw::StyleManager::default().set_color_scheme(match scheme.as_str() {
         "light" => adw::ColorScheme::ForceLight,
         "system" => adw::ColorScheme::Default,
+        _ if settings["ui"]["allow-white-mode"] == true => adw::ColorScheme::Default,
         _ => adw::ColorScheme::ForceDark,
     });
     eprintln!("Deckard editor: GTK 4 / libadwaita · Rust");
     let provider = gtk::CssProvider::new();
+    let icon_theme = gtk::IconTheme::for_display(&gdk::Display::default().context("No display")?);
+    for path in [
+        "/usr/share/deckard/icons",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../Assets/icons"),
+    ] {
+        if std::path::Path::new(path).is_dir() {
+            icon_theme.add_search_path(path);
+        }
+    }
     provider.load_from_string(concat!(
         include_str!("../../../../style.css"),
         include_str!("native.css")
@@ -188,6 +220,7 @@ pub fn run(shared: Shared, events: SyncSender<InputEvent>, signal: Arc<AtomicBoo
 }
 
 impl Ui {
+    #[allow(deprecated)]
     fn build(
         app: &adw::Application,
         shared: Shared,
@@ -215,40 +248,100 @@ impl Ui {
         header.add_css_class("flat");
         let deck_stack = gtk::Stack::builder().hexpand(true).vexpand(true).build();
         let switcher = gtk::StackSwitcher::builder().stack(&deck_stack).build();
-        header.set_title_widget(Some(&switcher));
-        let deck_settings = controls::button("Deck Settings", "input-keyboard-symbolic", || {});
+        switcher.set_margin_start(75);
+        switcher.set_margin_end(75);
+        let deck_titles = gtk::Stack::builder().hhomogeneous(false).build();
+        deck_titles.add_named(&switcher, Some("decks"));
+        let no_decks_title = gtk::Label::new(Some("No Decks Detected"));
+        no_decks_title.add_css_class("bold");
+        deck_titles.add_named(&no_decks_title, Some("empty"));
+        header.set_title_widget(Some(&deck_titles));
+        let deck_settings =
+            controls::button("Deck Settings", "drive-removable-media-symbolic", || {});
         header.pack_start(&deck_settings);
+        if let Some(box_) = deck_settings.child().and_downcast::<gtk::Box>() {
+            box_.set_spacing(10);
+        }
         let menu = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
             .build();
         let model = gio::Menu::new();
         for (label, action) in [
-            ("Store", "win.store"),
-            ("Pages", "win.pages"),
-            ("Assets", "win.assets"),
-            ("Settings", "win.settings"),
-            ("About Deckard", "win.about"),
+            ("Open Store", "win.store"),
+            ("Open Settings", "win.settings"),
             ("Quit", "win.quit"),
+            ("About", "win.about"),
+            ("Support Core447 (original author)", "win.support"),
         ] {
             model.append(Some(label), Some(action));
         }
         menu.set_menu_model(Some(&model));
         header.pack_end(&menu);
         content.append(&header);
-        content.append(&deck_stack);
+        deck_stack.set_margin_end(3);
+        deck_stack.set_margin_bottom(10);
+        deck_stack.set_size_request(500, -1);
+        let content_stack = gtk::Stack::builder().vexpand(true).hexpand(true).build();
+        content_stack.add_named(&deck_stack, Some("decks"));
+        let no_decks = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+        let caption = gtk::Label::new(Some("No Decks Available"));
+        caption.add_css_class("error-label");
+        no_decks.append(&caption);
+        let add_fake = gtk::Button::builder()
+            .label("Add A Fake Deck")
+            .margin_top(60)
+            .margin_start(60)
+            .margin_end(60)
+            .halign(gtk::Align::Center)
+            .build();
+        for class in ["text-button", "suggested-action", "pill"] {
+            add_fake.add_css_class(class);
+        }
+        no_decks.append(&add_fake);
+        no_decks.append(&gtk::Label::builder().label("<a href=\"https://core447.com/streamcontroller/docs/latest/common_problems/#1-no-decks-found\">Checkout Common Problems</a>")
+            .use_markup(true).margin_top(12).build());
+        content_stack.add_named(&no_decks, Some("empty"));
+        content.append(&content_stack);
         split.set_content(Some(&adw::NavigationPage::new(&content, "Deckard")));
         let side = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let side_header = adw::HeaderBar::builder().show_back_button(false).build();
         side_header.add_css_class("flat");
-        let page_button = gtk::MenuButton::builder().label("Page: Main").build();
-        let header_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        header_box.append(&page_button);
-        let page_settings = gtk::Button::from_icon_name("document-properties-symbolic");
+        let page_button = gtk::MenuButton::new();
+        page_button.add_css_class("header-page-dropdown");
+        page_button.set_tooltip_text(Some("Select page"));
+        let page_label = gtk::Label::builder()
+            .label("Main")
+            .xalign(0.)
+            .hexpand(true)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .max_width_chars(20)
+            .build();
+        let page_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        page_content.append(&page_label);
+        page_content.append(&gtk::Image::from_icon_name("pan-down-symbolic"));
+        page_button.set_child(Some(&page_content));
+        let header_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let caption = gtk::Label::new(Some("Page:"));
+        caption.add_css_class("bold");
+        caption.set_margin_start(3);
+        caption.set_margin_end(7);
+        header_box.append(&caption);
+        let linked = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        linked.add_css_class("linked");
+        header_box.append(&linked);
+        linked.append(&page_button);
+        let page_settings = gtk::Button::from_icon_name("folder-documents-symbolic");
         page_settings.set_tooltip_text(Some("Page settings"));
-        header_box.append(&page_settings);
+        linked.append(&page_settings);
         let pages = gtk::Button::from_icon_name("folder-open-symbolic");
-        pages.set_tooltip_text(Some("Manage pages"));
-        header_box.append(&pages);
+        pages.set_tooltip_text(Some("Page manager"));
+        linked.append(&pages);
         side_header.set_title_widget(Some(&header_box));
         side.append(&side_header);
         let sidebar = gtk::Stack::builder()
@@ -259,54 +352,82 @@ impl Ui {
             .vexpand(true)
             .hscrollbar_policy(gtk::PolicyType::Never)
             .build();
-        let controls = gtk::Box::new(gtk::Orientation::Vertical, 25);
-        controls.set_margin_start(12);
-        controls.set_margin_end(12);
-        controls.set_margin_top(20);
-        controls.set_margin_bottom(25);
+        let editor = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let controls = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let screen_title = gtk::Label::new(Some("Touch Bar"));
+        screen_title.add_css_class("large-title");
+        screen_title.add_css_class("bold");
+        screen_title.set_margin_top(15);
+        screen_title.set_margin_bottom(30);
+        screen_title.set_visible(false);
+        controls.append(&screen_title);
+        let state_scroll = gtk::ScrolledWindow::new();
+        state_scroll.set_hexpand(true);
+        state_scroll.set_margin_start(20);
+        state_scroll.set_margin_end(20);
+        state_scroll.set_margin_top(10);
+        state_scroll.set_margin_bottom(10);
         let state_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         state_box.set_halign(gtk::Align::Center);
+        state_box.set_valign(gtk::Align::Center);
+        state_box.set_overflow(gtk::Overflow::Hidden);
+        state_box.add_css_class("state-switcher-box");
         state_box.add_css_class("linked");
-        controls.append(&state_box);
+        state_scroll.set_child(Some(&state_box));
+        controls.append(&state_scroll);
         let preview = PreviewImage::new(175, 175);
         preview.set_halign(gtk::Align::Center);
         preview.add_css_class("key-image");
         preview.set_overflow(gtk::Overflow::Hidden);
         preview.add_css_class("icon-selector-image-base");
-        let preview_button = gtk::Button::builder()
-            .child(&preview)
-            .tooltip_text("Choose image, GIF or video")
+        preview.add_css_class("icon-selector-image-key");
+        let picture_overlay = gtk::Overlay::builder().child(&preview).build();
+        let hint = gtk::Label::builder()
+            .label("Click to change")
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .can_target(false)
             .build();
-        preview_button.add_css_class("deckard-key");
+        hint.add_css_class("icon-selector-hint-label-hidden");
+        picture_overlay.add_overlay(&hint);
+        let preview_button = gtk::Button::builder().child(&picture_overlay).build();
+        preview_button.add_css_class("icon-selectorkey-image");
+        preview_button.add_css_class("no-padding");
+        preview_button.set_overflow(gtk::Overflow::Hidden);
+        controls::margins(&preview_button, 10);
         preview_button.set_widget_name("selected-icon");
         let preview_host = gtk::Overlay::builder()
             .child(&preview_button)
             .halign(gtk::Align::Center)
+            .margin_top(30)
             .build();
-        preview_host.set_margin_top(37);
-        preview_host.set_margin_bottom(70);
-        let hint = gtk::Label::builder()
-            .label("Choose an image")
-            .halign(gtk::Align::Center)
-            .valign(gtk::Align::Center)
-            .can_target(false)
-            .visible(false)
-            .build();
-        hint.add_css_class("heading");
-        preview_host.add_overlay(&hint);
         let remove_icon = gtk::Button::from_icon_name("user-trash-symbolic");
-        remove_icon.set_tooltip_text(Some("Remove image"));
         remove_icon.set_widget_name("remove-selected-image");
-        remove_icon.add_css_class("icon-selector-remove-button");
+        for class in ["icon-selector-remove-button", "no-padding", "remove-button"] {
+            remove_icon.add_css_class(class);
+        }
         remove_icon.set_halign(gtk::Align::End);
         remove_icon.set_valign(gtk::Align::End);
         remove_icon.set_visible(false);
         preview_host.add_overlay(&remove_icon);
+        preview_host.set_clip_overlay(&remove_icon, true);
         controls.append(&preview_host);
         scroll.set_child(Some(&controls));
-        sidebar.add_named(&scroll, Some("editor"));
+        editor.append(&scroll);
+        let remove_state = gtk::Button::with_label("Remove State");
+        remove_state.add_css_class("destructive-action");
+        controls::margins(&remove_state, 15);
+        remove_state.set_visible(false);
+        editor.append(&remove_state);
+        sidebar.set_transition_duration(200);
+        sidebar.add_named(&editor, Some("editor"));
         side.append(&sidebar);
-        split.set_sidebar(Some(&adw::NavigationPage::new(&side, "Sidebar")));
+        let sidebar_page = adw::NavigationPage::new(&side, "Sidebar");
+        sidebar_page.set_margin_start(4);
+        sidebar_page.set_margin_end(4);
+        sidebar_page.set_size_request(300, -1);
+        sidebar_page.set_hexpand(true);
+        split.set_sidebar(Some(&sidebar_page));
         split.set_show_content(true);
         let engine = shared.lock().unwrap();
         let mut devices: Vec<_> = engine.devices.values().collect();
@@ -340,7 +461,19 @@ impl Ui {
             sidebar,
             controls,
             deck_stack,
+            content_stack,
+            deck_titles,
+            main_menu: menu,
+            fps_banners: RefCell::new(HashMap::new()),
             page_button,
+            page_label,
+            remove_state,
+            screen_title,
+            editor_scroll: scroll,
+            editor_body: editor,
+            screen_clamp: adw::Clamp::new(),
+            remove_icon: remove_icon.clone(),
+            deck_settings_visible: Cell::new(false),
             deck_settings,
             preview,
             preview_host,
@@ -354,6 +487,7 @@ impl Ui {
                 state: 0,
                 sticky: false,
             }),
+            loaded_selection: RefCell::new(None),
             draft: RefCell::new(json!({})),
             previews: RefCell::new(Vec::new()),
             deck_signature: RefCell::new(Vec::new()),
@@ -365,7 +499,10 @@ impl Ui {
             definitions: RefCell::new(definitions),
             choices: RefCell::new(json!({})),
             players: RefCell::new(json!([])),
+            player_refreshed: Cell::new(std::time::Instant::now() - Duration::from_secs(60)),
             catalog_dialog: RefCell::new(None),
+            auxiliary_windows: RefCell::new(HashMap::new()),
+            page_manager: RefCell::new(None),
             catalog_box: RefCell::new(None),
             capture_done: Cell::new(false),
         });
@@ -389,17 +526,12 @@ impl Ui {
         let motion = gtk::EventControllerMotion::new();
         let weak = Rc::downgrade(&ui);
         let caption = hint.clone();
-        let remove = remove_icon.clone();
         motion.connect_enter(move |_, _, _| {
             if let Some(ui) = weak.upgrade() {
                 ui.preview.remove_css_class("icon-selector-image-base");
                 ui.preview.add_css_class("icon-selector-image-hover");
-                caption.set_visible(true);
-                remove.set_visible(
-                    ui.draft.borrow()["media"]["path"]
-                        .as_str()
-                        .is_some_and(|p| !p.is_empty()),
-                );
+                caption.remove_css_class("icon-selector-hint-label-hidden");
+                caption.add_css_class("icon-selector-hint-label-visible");
             }
         });
         let weak = Rc::downgrade(&ui);
@@ -407,12 +539,32 @@ impl Ui {
             if let Some(ui) = weak.upgrade() {
                 ui.preview.remove_css_class("icon-selector-image-hover");
                 ui.preview.add_css_class("icon-selector-image-base");
-                hint.set_visible(false);
-                remove_icon.set_visible(false);
+                hint.remove_css_class("icon-selector-hint-label-visible");
+                hint.add_css_class("icon-selector-hint-label-hidden");
+            }
+        });
+        let weak = Rc::downgrade(&ui);
+        ui.remove_state.connect_clicked(move |_| {
+            if let Some(ui) = weak.upgrade() {
+                ui.change_states(false);
             }
         });
         ui.preview_host.add_controller(motion);
         ui.install_actions(app);
+        let weak = Rc::downgrade(&ui);
+        add_fake.connect_clicked(move |_| {
+            if let Some(ui) = weak.upgrade() {
+                ui.settings();
+                if let Some(window) = ui
+                    .auxiliary_windows
+                    .borrow()
+                    .get("Settings")
+                    .and_then(|w| w.downcast_ref::<adw::PreferencesWindow>())
+                {
+                    window.set_visible_page_name("Developer");
+                }
+            }
+        });
         ui.bridge.listen(&ui);
         let weak = Rc::downgrade(&ui);
         pages.connect_clicked(move |_| {
@@ -471,6 +623,12 @@ impl Ui {
             let weak = Rc::downgrade(&ui);
             glib::timeout_add_local_once(Duration::from_millis(1800), move || {
                 if let Some(ui) = weak.upgrade() {
+                    ui.capture_scene();
+                }
+            });
+            let weak = Rc::downgrade(&ui);
+            glib::timeout_add_local_once(Duration::from_millis(5200), move || {
+                if let Some(ui) = weak.upgrade() {
                     ui.capture();
                 }
             });
@@ -502,6 +660,8 @@ impl Ui {
             "cut-input",
             "paste-input",
             "clear-input",
+            "update-input",
+            "support",
         ] {
             let action = gio::SimpleAction::new(name, None);
             let weak = Rc::downgrade(self);
@@ -517,6 +677,17 @@ impl Ui {
                         "cut-input" => ui.clipboard(false, true),
                         "paste-input" => ui.clipboard(true, false),
                         "clear-input" => ui.clear_input(),
+                        "update-input" => {
+                            ui.force_reload.set(true);
+                            ui.refresh();
+                        }
+                        "support" => {
+                            gtk::UriLauncher::new("https://ko-fi.com/core447").launch(
+                                Some(&ui.window),
+                                gio::Cancellable::NONE,
+                                |_| {},
+                            );
+                        }
                         _ => ui.command("quit", json!({}), "", false),
                     }
                 }
@@ -637,29 +808,5 @@ impl Ui {
                 })
             }),
         });
-    }
-    fn capture(&self) {
-        let Some(path) = std::env::var_os("DECKARD_UI_CAPTURE") else {
-            return;
-        };
-        if self.capture_done.get() || self.window.width() == 0 {
-            return;
-        }
-        let paintable = gtk::WidgetPaintable::new(Some(&self.window));
-        let snapshot = gtk::Snapshot::new();
-        paintable.snapshot(
-            &snapshot,
-            self.window.width() as f64,
-            self.window.height() as f64,
-        );
-        if let (Some(node), Some(renderer)) = (snapshot.to_node(), self.window.renderer()) {
-            match renderer
-                .render_texture(&node, None)
-                .save_to_png(PathBuf::from(path))
-            {
-                Ok(()) => self.capture_done.set(true),
-                Err(e) => eprintln!("Editor screenshot: {e}"),
-            }
-        }
     }
 }

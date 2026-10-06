@@ -1,6 +1,6 @@
 # Using Deckard
 
-Connect your deck and launch Deckard. Select an input, choose an action and edit its labels or image. In **Store → Pages**, load the catalog and install **Rust Starter** for a ready-made page. Select that page in the editor; its native plugin is included. **Settings** includes autostart and an **Enable USB access** helper. Native packages install the USB rules automatically; reconnect the deck if permission errors persist. The USB access helper requires administrator authentication.
+Connect your deck and launch Deckard. Select an input, choose an action and edit its labels or image. In **Store → Plugins**, load the catalog and install **Rust Starter** for a ready-made page. Select that page in the editor; its native plugin is included. **Settings → System** includes autostart. Native packages install USB/input rules automatically; reconnect your deck after installation.
 
 ## What the Rust port includes
 
@@ -13,7 +13,7 @@ Connect your deck and launch Deckard. Select an input, choose an action and edit
 - Native plugin/page/icon catalogs, branch filtering, source links, custom icon packs, lazy GUI startup, tray Open/Restart/Quit and an expanded CLI.
 - Optional AI page proposals through a configurable endpoint. AI is off by default; proposals are reviewed before saving and command/text/hotkey actions require explicit permission in the UI.
 
-**All 56 actions in the five recommended plugins have native implementations.** OSPlugin, DeckPlugin, MediaPlugin, OBSPlugin and VolumeMixer now include live readouts, graphs, artwork, OBS meters/status, repeating input, periodic commands and timed returns. These run in Rust. Open **Settings → Inspect legacy actions → Migrate supported actions** to translate saved actions with exact backups. [Action coverage, setup and migration](plugin-migration.md).
+**All 56 actions in the five recommended plugins have native implementations.** OSPlugin, DeckPlugin, MediaPlugin, OBSPlugin and VolumeMixer now include live readouts, graphs, artwork, OBS meters/status, repeating input, periodic commands and timed returns. These run in Rust. Run `deckard --migrate-legacy-actions` to translate saved actions with exact backups. [Action coverage, setup and migration](plugin-migration.md).
 
 **Plugin API changed:** Python/GTK plugins do not run. Existing page JSON and unknown plugin settings are retained. See the [new executable plugin interface](native-plugins.md) and [working Rust example](../rust/plugin-example). The GTK4/libadwaita editor is implemented in Rust; native plugin field schemas create its settings controls. [Editor details](ui-restoration.md).
 

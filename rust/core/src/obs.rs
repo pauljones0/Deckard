@@ -108,6 +108,28 @@ pub struct Client {
     pub events: std::collections::HashMap<String, Value>,
     pub event_received: std::collections::HashMap<String, Instant>,
 }
+/// Settings choices share one connection; fetching items is limited to the
+/// selected scene so a large OBS collection cannot create an unbounded job.
+pub fn choices(connection: &Value, id: &str, scene: &str) -> Result<Value> {
+    let mut client = connect(connection, 0)?;
+    let mut choices = json!({"connection":id});
+    for (key, request) in [
+        ("scenes", "GetSceneList"),
+        ("inputs", "GetInputList"),
+        ("collections", "GetSceneCollectionList"),
+    ] {
+        choices[key] = client.query(request, json!({}))?;
+    }
+    if !scene.is_empty() {
+        if let Ok(items) = client.query("GetSceneItemList", json!({"sceneName":scene})) {
+            choices["items"][scene] = items;
+        }
+        if let Ok(filters) = client.query("GetSourceFilterList", json!({"sourceName":scene})) {
+            choices["filters"][scene] = filters;
+        }
+    }
+    Ok(choices)
+}
 impl Client {
     pub fn query(&mut self, operation: &str, data: Value) -> Result<Value> {
         request_events(

@@ -195,6 +195,18 @@ pub struct Renderer {
     glyphs: std::cell::RefCell<GlyphCache>,
     pub errors: Vec<String>,
     fonts: std::cell::RefCell<HashMap<String, Option<ab_glyph::FontArc>>>,
+    label_layers: HashMap<u64, Arc<RgbaImage>>,
+    label_bytes: usize,
+    saturation: f32,
+    saturated: HashMap<usize, (Arc<RgbaImage>, Arc<RgbaImage>)>,
+    cache_videos: bool,
+    page_assets: std::collections::VecDeque<(String, HashSet<AssetKey>)>,
+    rolling_labels: bool,
+    labels_rolling: bool,
+    rolling_layers: HashMap<u64, (Arc<RgbaImage>, Instant, u32)>,
+    paused: bool,
+    pause_started: Option<Instant>,
+    paused_duration: Duration,
 }
 pub fn layout(kind: Kind, rotation: u16) -> (u8, u8) {
     let (rows, cols) = kind.key_layout();
@@ -320,6 +332,18 @@ impl Renderer {
             glyphs: std::cell::RefCell::new(GlyphCache::default()),
             errors: Vec::new(),
             fonts: std::cell::RefCell::new(HashMap::new()),
+            label_layers: HashMap::new(),
+            label_bytes: 0,
+            saturation: 1.,
+            saturated: HashMap::new(),
+            cache_videos: true,
+            page_assets: std::collections::VecDeque::new(),
+            rolling_labels: true,
+            labels_rolling: false,
+            rolling_layers: HashMap::new(),
+            paused: false,
+            pause_started: None,
+            paused_duration: Duration::ZERO,
         })
     }
     pub fn release_media(&mut self) {
@@ -335,6 +359,12 @@ impl Renderer {
         self.previous_config = None;
         self.scaled.clear();
         self.scaled_bytes = 0;
+        self.label_layers.clear();
+        self.label_bytes = 0;
+        self.saturated.clear();
+        self.page_assets.clear();
+        self.rolling_layers.clear();
+        self.labels_rolling = false;
         self.animated = false;
         self.next_frame = None;
     }
@@ -351,7 +381,40 @@ impl Renderer {
         if path.is_empty() {
             return None;
         }
-        self.asset_key(AssetKey::new(path, width, height, options, self.max_fps))
+        let frame = self.asset_key(AssetKey::new(path, width, height, options, self.max_fps))?;
+        if (self.saturation - 1.).abs() < 0.001 {
+            return Some(frame);
+        }
+        let identity = Arc::as_ptr(&frame) as usize;
+        if let Some((_, image)) = self.saturated.get(&identity) {
+            return Some(image.clone());
+        }
+        let mut enhanced = (*frame).clone();
+        for pixel in enhanced.pixels_mut() {
+            // Pillow ImageEnhance.Color uses the ITU-R 601 luma conversion.
+            let gray = ((299 * u32::from(pixel[0])
+                + 587 * u32::from(pixel[1])
+                + 114 * u32::from(pixel[2])
+                + 500)
+                / 1000) as f32;
+            for channel in &mut pixel.0[..3] {
+                *channel =
+                    (gray + (*channel as f32 - gray) * self.saturation).clamp(0., 255.) as u8;
+            }
+        }
+        let enhanced = Arc::new(enhanced);
+        if self
+            .saturated
+            .values()
+            .map(|(a, b)| a.as_raw().len() + b.as_raw().len())
+            .sum::<usize>()
+            + frame.as_raw().len() * 2
+            > 8 * 1024 * 1024
+        {
+            self.saturated.clear();
+        }
+        self.saturated.insert(identity, (frame, enhanced.clone()));
+        Some(enhanced)
     }
     fn asset_key(&mut self, key: AssetKey) -> Option<Arc<RgbaImage>> {
         let path = &key.path;
@@ -363,6 +426,11 @@ impl Renderer {
         if !self.assets.contains_key(&key) {
             // Static and decoded GIF canvases share a hard per-asset bound.
             let loaded = (|| -> Result<Asset> {
+                if let Some(bytes) = crate::artwork::bytes(&path.to_string_lossy()) {
+                    return Ok(Asset::Static(Arc::new(
+                        image::load_from_memory(bytes)?.to_rgba8(),
+                    )));
+                }
                 let extension = path
                     .extension()
                     .unwrap_or_default()
@@ -432,7 +500,25 @@ impl Renderer {
                     .push(format!("Media {}: {error}", path.display()));
                 Asset::Failed
             });
-            let total = self.assets.values().map(Asset::memory).sum::<usize>();
+            let mut total = self.assets.values().map(Asset::memory).sum::<usize>();
+            if total.saturating_add(loaded.memory()) > 64 * 1024 * 1024 {
+                let inactive = self
+                    .assets
+                    .iter()
+                    .filter(|(key, asset)| {
+                        !self.used.contains(*key) && matches!(asset, Asset::Static(_))
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect::<Vec<_>>();
+                for key in inactive {
+                    if let Some(old) = self.assets.remove(&key) {
+                        total -= old.memory();
+                    }
+                    if total.saturating_add(loaded.memory()) <= 64 * 1024 * 1024 {
+                        break;
+                    }
+                }
+            }
             let loaded = if total.saturating_add(loaded.memory()) <= 64 * 1024 * 1024 {
                 loaded
             } else {
@@ -453,6 +539,7 @@ impl Renderer {
         let result = match asset {
             Asset::Static(image) => Some(image.clone()),
             Asset::Gif(player) => {
+                player.set_paused(self.paused);
                 self.animated |= player.running();
                 match player.tick(Instant::now()).map(|_| ()) {
                     Ok(()) => {
@@ -479,9 +566,11 @@ impl Renderer {
                 }
             }
             Asset::Video(player) => {
+                player.set_paused(self.paused);
                 let running = player.running();
-                self.animated |= running;
-                if running {
+                let waiting_first = player.current().is_none();
+                self.animated |= running && (!self.paused || waiting_first);
+                if running && (!self.paused || waiting_first) {
                     let deadline = player.next_deadline();
                     self.next_frame =
                         Some(self.next_frame.map_or(deadline, |old| old.min(deadline)));
@@ -505,15 +594,42 @@ impl Renderer {
         self.render_shared(kind, Arc::new(config.clone()))
     }
     pub fn render_shared(&mut self, kind: Kind, config: Arc<RenderConfig>) -> Result<Frame> {
+        let paused = config.page["native-options"]["pause-animations"]
+            .as_bool()
+            .unwrap_or(false);
+        if paused && !self.paused {
+            self.pause_started = Some(Instant::now());
+        } else if !paused
+            && self.paused
+            && let Some(started) = self.pause_started.take()
+        {
+            let duration = started.elapsed();
+            self.paused_duration += duration;
+            for (_, started, _) in self.rolling_layers.values_mut() {
+                *started += duration;
+            }
+        }
+        self.paused = paused;
+        let saturation = config.page["native-options"]["saturation"]
+            .as_f64()
+            .unwrap_or(1.) as f32;
+        if (saturation - self.saturation).abs() > 0.001 {
+            self.saturated.clear();
+            self.saturation = saturation;
+        }
+        self.cache_videos = config.page["native-options"]["cache-videos"]
+            .as_bool()
+            .unwrap_or(true);
         let config_ref = &config;
         if config.revision != self.last_revision {
             self.last_revision = config.revision;
             self.assets.retain(|path, asset| {
                 !matches!(asset, Asset::Failed)
-                    && std::fs::metadata(&path.path)
-                        .ok()
-                        .and_then(|m| m.modified().ok().map(|t| (m.len(), t)))
-                        .is_some_and(|stamp| self.stamps.get(path) == Some(&stamp))
+                    && (path.path.to_str().and_then(crate::artwork::bytes).is_some()
+                        || std::fs::metadata(&path.path)
+                            .ok()
+                            .and_then(|m| m.modified().ok().map(|t| (m.len(), t)))
+                            .is_some_and(|stamp| self.stamps.get(path) == Some(&stamp)))
             });
         }
         self.gif_frames
@@ -530,7 +646,12 @@ impl Renderer {
                 .as_i64()
                 .unwrap_or(10)
                 > 0;
-        let unchanged_config = !slideshow
+        self.rolling_labels = config.page["native-options"]["rolling-labels"]
+            .as_bool()
+            .unwrap_or(true);
+        let had_rolling = self.labels_rolling && self.rolling_labels && !self.paused;
+        self.labels_rolling = false;
+        let unchanged_config = (!slideshow || self.paused)
             && self
                 .previous_config
                 .as_ref()
@@ -539,7 +660,7 @@ impl Renderer {
                         && (Arc::ptr_eq(previous, &config)
                             || previous.as_ref() == config_ref.as_ref())
                 });
-        if unchanged_config {
+        if unchanged_config && !had_rolling {
             // Advance playback clocks, but reuse the composed frame until its pixels change.
             let paths: Vec<_> = self.assets.keys().cloned().collect();
             for path in paths {
@@ -574,22 +695,26 @@ impl Renderer {
         let background = &config.page["background"];
         let paths = background["media-paths"].as_array();
         let interval = background["slideshow-interval"].as_i64().unwrap_or(10);
-        let seconds = std::time::SystemTime::now()
+        let slideshow_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs();
+            .saturating_sub(self.paused_duration)
+            .saturating_sub(
+                self.pause_started
+                    .map_or(Duration::ZERO, |started| started.elapsed()),
+            );
+        let seconds = slideshow_time.as_secs();
         let slideshow = paths.and_then(|paths| {
             if paths.len() < 2 {
                 return None;
             }
-            self.animated = interval > 0;
-            if interval > 0 {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default();
+            self.animated = interval > 0 && !self.paused;
+            if interval > 0 && !self.paused {
                 let until = Duration::from_secs(interval as u64)
                     - Duration::from_nanos(
-                        (now.as_nanos() % Duration::from_secs(interval as u64).as_nanos()) as u64,
+                        (slideshow_time.as_nanos()
+                            % Duration::from_secs(interval as u64).as_nanos())
+                            as u64,
                     );
                 self.next_frame = Some(Instant::now() + until);
             }
@@ -662,6 +787,7 @@ impl Renderer {
                 state["native-visual"]["artwork"].as_str().unwrap_or(""),
             ];
             if unchanged_config
+                && !had_rolling
                 && unchanged_sources(&paths, &previous_assets, &self.asset_frames)
                 && let Some(tile) = self
                     .previous_frame
@@ -683,7 +809,8 @@ impl Renderer {
             } else {
                 RgbaImage::from_pixel(w, h, Rgba([0, 0, 0, 255]))
             };
-            let mut persistent = whole.is_none() || repeatable_media(bgpath, background);
+            let mut persistent =
+                whole.is_none() || cacheable_media(bgpath, background, self.cache_videos);
             if config.sleeping {
                 tile.fill(0)
             } else {
@@ -698,7 +825,7 @@ impl Renderer {
                 .flatten()
                 {
                     if let Some(img) = self.asset_playback(path, w, h, &state["media"]) {
-                        persistent &= repeatable_media(path, &state["media"]);
+                        persistent &= cacheable_media(path, &state["media"], self.cache_videos);
                         let img = self.scaled_media(&img, w, h, &state["media"], "cover");
                         self.overlay_image(&mut tile, &img, 0, 0);
                     }
@@ -743,6 +870,7 @@ impl Renderer {
             }
         }
         let reusable_strip = unchanged_config
+            && !had_rolling
             && unchanged_sources(&strip_paths, &previous_assets, &self.asset_frames);
         let strip = if reusable_strip {
             self.previous_frame.as_ref().and_then(|f| f.strip.clone())
@@ -758,7 +886,7 @@ impl Renderer {
             let mut persistent = true;
             if !config.sleeping {
                 if extend && let Some(whole) = &whole {
-                    persistent &= repeatable_media(bgpath, background);
+                    persistent &= cacheable_media(bgpath, background, self.cache_videos);
                     let (l, t, r, b) = band.crop;
                     let crop = imageops::crop_imm(whole, l, t, r - l, b - t).to_image();
                     let crop = imageops::resize(&crop, sw, sh, FilterType::Triangle);
@@ -775,7 +903,7 @@ impl Renderer {
                     if let Some(path) = state["media"]["path"].as_str()
                         && let Some(image) = self.asset_playback(path, sw, sh, &state["media"])
                     {
-                        persistent &= repeatable_media(path, &state["media"]);
+                        persistent &= cacheable_media(path, &state["media"], self.cache_videos);
                         let image = self.scaled_media(&image, sw, sh, &state["media"], "contain");
                         self.overlay_image(&mut strip, &image, 0, 0);
                     }
@@ -791,7 +919,7 @@ impl Renderer {
                     if let Some(path) = state["media"]["path"].as_str()
                         && let Some(image) = self.asset_playback(path, sw, sh, &state["media"])
                     {
-                        persistent &= repeatable_media(path, &state["media"]);
+                        persistent &= cacheable_media(path, &state["media"], self.cache_videos);
                         let image = self.scaled_media(&image, sw, sh, &state["media"], "contain");
                         self.overlay_image(&mut strip, &image, 0, 0);
                     }
@@ -826,7 +954,7 @@ impl Renderer {
                         if let Some(path) = state["media"]["path"].as_str()
                             && let Some(img) = self.asset_playback(path, tw, th, &state["media"])
                         {
-                            persistent &= repeatable_media(path, &state["media"]);
+                            persistent &= cacheable_media(path, &state["media"], self.cache_videos);
                             let image = self.scaled_media(&img, tw, th, &state["media"], "contain");
                             self.overlay_image(&mut part, &image, 0, 0);
                         }
@@ -864,8 +992,25 @@ impl Renderer {
         } else {
             None
         };
-        self.assets.retain(|p, _| self.used.contains(p));
-        self.stamps.retain(|p, _| self.used.contains(p));
+        let page = config.page["name"].as_str().unwrap_or("").to_owned();
+        self.page_assets.retain(|(name, _)| name != &page);
+        self.page_assets.push_back((page, self.used.clone()));
+        let retained_pages = config.page["native-options"]["cached-pages"]
+            .as_u64()
+            .unwrap_or(3)
+            .min(50) as usize;
+        while self.page_assets.len() > retained_pages {
+            self.page_assets.pop_front();
+        }
+        let retained = self
+            .page_assets
+            .iter()
+            .flat_map(|(_, paths)| paths.iter())
+            .collect::<HashSet<_>>();
+        self.assets.retain(|p, asset| {
+            self.used.contains(p) || (matches!(asset, Asset::Static(_)) && retained.contains(p))
+        });
+        self.stamps.retain(|p, _| self.assets.contains_key(p));
         self.gif_frames.retain(|path, _| self.used.contains(path));
         let frame = Frame {
             tiles,
@@ -1273,33 +1418,159 @@ impl Renderer {
         let opaque = self.opacity.opaque(top);
         overlay_rgba_inner(bottom, top, x, y, opaque);
     }
-    fn labels(&self, img: &mut RgbaImage, state: &Value) {
+    fn labels(&mut self, img: &mut RgbaImage, state: &Value) {
+        if !state["labels"].as_object().is_some_and(|labels| {
+            labels
+                .values()
+                .any(|label| label["text"].as_str().is_some_and(|s| !s.is_empty()))
+        }) {
+            return;
+        }
+        let mut stationary = state.clone();
+        if self.rolling_labels {
+            for position in ["top", "center", "bottom"] {
+                let label = &state["labels"][position];
+                let Some(text) = label["text"].as_str().filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                let size = label["font-size"].as_f64().unwrap_or(15.).clamp(6., 72.) as f32;
+                let glyphs = self.label_glyphs(
+                    text,
+                    label["font-family"].as_str().unwrap_or("Roboto"),
+                    size,
+                    label,
+                );
+                let width = glyphs
+                    .iter()
+                    .map(|(m, _)| m.advance_width)
+                    .sum::<f32>()
+                    .ceil() as u32;
+                if width <= img.width().saturating_sub(6) || width > 4090 {
+                    continue;
+                }
+                let mut hash = std::collections::hash_map::DefaultHasher::new();
+                img.dimensions().hash(&mut hash);
+                position.hash(&mut hash);
+                label.to_string().hash(&mut hash);
+                let hash = hash.finish();
+                if !self.rolling_layers.contains_key(&hash) {
+                    let mut strip = RgbaImage::new(width + 6, img.height());
+                    let mut text_state = json!({"labels":{position:label.clone()}});
+                    text_state["labels"][position]["alignment"] = json!("left");
+                    self.draw_labels(&mut strip, &text_state);
+                    if self.rolling_layers.len() >= 24
+                        || self
+                            .rolling_layers
+                            .values()
+                            .map(|(img, _, _)| img.as_raw().len())
+                            .sum::<usize>()
+                            + strip.as_raw().len()
+                            > 4 * 1024 * 1024
+                    {
+                        self.rolling_layers.clear();
+                    }
+                    self.rolling_layers.insert(
+                        hash,
+                        (
+                            Arc::new(strip),
+                            Instant::now(),
+                            width.saturating_sub(img.width().saturating_sub(6)) + 20,
+                        ),
+                    );
+                }
+                let (strip, started, distance) = &self.rolling_layers[&hash];
+                let now = self
+                    .pause_started
+                    .unwrap_or_else(Instant::now)
+                    .max(*started);
+                let hold = 50. / 30.;
+                let step = 2. / 30.;
+                let cycle = hold + (*distance as f64 + 1.) * step + 25. / 30.;
+                let phase = now.duration_since(*started).as_secs_f64() % cycle;
+                let offset = if phase <= hold {
+                    0
+                } else {
+                    (((phase - hold) / step).floor() as u32).min(*distance)
+                };
+                overlay_rgba(img, strip, 10 - i64::from(offset), 0);
+                let delay = if phase < hold {
+                    hold - phase
+                } else if offset < *distance {
+                    step - ((phase - hold) % step)
+                } else {
+                    cycle - phase
+                };
+                let deadline = now + Duration::from_secs_f64(delay.max(0.001));
+                if !self.paused {
+                    self.next_frame =
+                        Some(self.next_frame.map_or(deadline, |old| old.min(deadline)));
+                    self.animated = true;
+                }
+                self.labels_rolling = true;
+                stationary["labels"][position]["text"] = json!("");
+            }
+        }
+        let state = &stationary;
+        let mut key = std::collections::hash_map::DefaultHasher::new();
+        img.dimensions().hash(&mut key);
+        state["labels"].to_string().hash(&mut key);
+        let key = key.finish();
+        let layer = if let Some(layer) = self.label_layers.get(&key) {
+            layer.clone()
+        } else {
+            let mut layer = RgbaImage::new(img.width(), img.height());
+            self.draw_labels(&mut layer, state);
+            let layer = Arc::new(layer);
+            let bytes = layer.as_raw().len();
+            if self.label_bytes + bytes > 4 * 1024 * 1024 || self.label_layers.len() >= 64 {
+                self.label_layers.clear();
+                self.label_bytes = 0;
+            }
+            if bytes <= 4 * 1024 * 1024 {
+                self.label_layers.insert(key, layer.clone());
+                self.label_bytes += bytes;
+            }
+            layer
+        };
+        overlay_rgba(img, &layer, 0, 0);
+    }
+    fn draw_labels(&self, img: &mut RgbaImage, state: &Value) {
         for (position, y) in [("top", 0.12), ("center", 0.5), ("bottom", 0.87)] {
             let label = &state["labels"][position];
             if let Some(text) = label["text"].as_str() {
-                let outline = label["outline-width"].as_u64().unwrap_or(0).min(5) as i32;
+                let outline = label["outline-width"]
+                    .as_f64()
+                    .or_else(|| label["outline_width"].as_f64())
+                    .unwrap_or(2.)
+                    .clamp(0., 10.) as i32;
+                let outline_color = label
+                    .get("outline-color")
+                    .or_else(|| label.get("outline_color"))
+                    .unwrap_or(&Value::Null);
                 for dx in -outline..=outline {
                     for dy in -outline..=outline {
                         if dx * dx + dy * dy <= outline * outline && (dx != 0 || dy != 0) {
-                            self.text_font(
+                            self.styled_text(
                                 img,
                                 (text, label["font-family"].as_str().unwrap_or("Roboto")),
-                                label["font-size"].as_f64().unwrap_or(14.0).clamp(6.0, 72.0) as f32,
-                                color(&label["outline-color"], [0, 0, 0, 255]),
+                                label["font-size"].as_f64().unwrap_or(15.0).clamp(6.0, 72.0) as f32,
+                                color(outline_color, [0, 0, 0, 255]),
                                 (
                                     0.5 + dx as f32 / img.width() as f32,
                                     y + dy as f32 / img.height() as f32,
                                 ),
+                                label,
                             );
                         }
                     }
                 }
-                self.text_font(
+                self.styled_text(
                     img,
                     (text, label["font-family"].as_str().unwrap_or("Roboto")),
-                    label["font-size"].as_f64().unwrap_or(14.0).clamp(6.0, 72.0) as f32,
+                    label["font-size"].as_f64().unwrap_or(15.0).clamp(6.0, 72.0) as f32,
                     color(&label["color"], [255, 255, 255, 255]),
                     (0.5, y),
+                    label,
                 )
             }
         }
@@ -1315,12 +1586,26 @@ impl Renderer {
         color: [u8; 4],
         pos: (f32, f32),
     ) {
-        let (text, family) = content;
-        let custom = if family == "Roboto" {
+        self.styled_text(img, content, size, color, pos, &Value::Null);
+    }
+    fn label_glyphs(
+        &self,
+        text: &str,
+        family: &str,
+        size: f32,
+        label: &Value,
+    ) -> Vec<(GlyphMetrics, Arc<[u8]>)> {
+        let weight = label["font-weight"].as_u64().unwrap_or(400).clamp(100, 900) as u16;
+        let style = label["font-style"]
+            .as_str()
+            .or_else(|| label["style"].as_str())
+            .unwrap_or("normal");
+        let font_key = format!("{family}:{weight}:{style}");
+        let custom = if family == "Roboto" && weight == 400 && style == "normal" {
             None
         } else {
             let mut fonts = self.fonts.borrow_mut();
-            if !fonts.contains_key(family) && fonts.len() >= 32 {
+            if !fonts.contains_key(&font_key) && fonts.len() >= 32 {
                 // Failed lookups must not occupy every slot and block a valid font.
                 let missing = fonts
                     .iter()
@@ -1329,7 +1614,7 @@ impl Renderer {
                     fonts.remove(&name);
                 }
             }
-            if !fonts.contains_key(family) && fonts.len() < 32 {
+            if !fonts.contains_key(&font_key) && fonts.len() < 32 {
                 static DATABASE: std::sync::OnceLock<resvg::usvg::fontdb::Database> =
                     std::sync::OnceLock::new();
                 let db = DATABASE.get_or_init(|| {
@@ -1339,6 +1624,12 @@ impl Renderer {
                 });
                 let query = resvg::usvg::fontdb::Query {
                     families: &[resvg::usvg::fontdb::Family::Name(family)],
+                    weight: resvg::usvg::fontdb::Weight(weight),
+                    style: match style {
+                        "italic" => resvg::usvg::fontdb::Style::Italic,
+                        "oblique" => resvg::usvg::fontdb::Style::Oblique,
+                        _ => resvg::usvg::fontdb::Style::Normal,
+                    },
                     ..Default::default()
                 };
                 let font = db
@@ -1351,19 +1642,55 @@ impl Renderer {
                     })
                     .and_then(Result::ok);
                 // A missing/unsupported family must not scan the database every frame.
-                fonts.insert(family.into(), font);
+                fonts.insert(font_key.clone(), font);
             }
-            fonts.get(family).cloned().flatten()
+            fonts.get(&font_key).cloned().flatten()
         };
         let font = custom.as_ref().unwrap_or(&self.font);
-        let glyphs: Vec<_> = text
-            .chars()
+        text.chars()
             .take(128)
-            .map(|c| self.glyphs.borrow_mut().get(family, c, size, font))
-            .collect();
+            .map(|c| self.glyphs.borrow_mut().get(&font_key, c, size, font))
+            .collect()
+    }
+    fn styled_text(
+        &self,
+        img: &mut RgbaImage,
+        content: (&str, &str),
+        size: f32,
+        color: [u8; 4],
+        pos: (f32, f32),
+        label: &Value,
+    ) {
+        let (text, family) = content;
+        let glyphs = self.label_glyphs(text, family, size, label);
         let width: f32 = glyphs.iter().map(|(m, _)| m.advance_width).sum();
-        let mut x = (img.width() as f32 * pos.0 - width / 2.0) as i32;
-        let baseline = (img.height() as f32 * pos.1 + size / 3.0) as i32;
+        let mut x = match label["alignment"].as_str().unwrap_or("center") {
+            "left" => (3. + img.width() as f32 * (pos.0 - 0.5)) as i32,
+            "right" => {
+                (img.width() as f32 - 3. - width + img.width() as f32 * (pos.0 - 0.5)) as i32
+            }
+            _ => (img.width() as f32 * pos.0 - width / 2.) as i32,
+        };
+        let top = glyphs
+            .iter()
+            .filter(|(m, _)| m.height > 0)
+            .map(|(m, _)| -(m.height as i32) - m.ymin)
+            .min()
+            .unwrap_or(0);
+        let bottom = glyphs
+            .iter()
+            .filter(|(m, _)| m.height > 0)
+            .map(|(m, _)| -m.ymin)
+            .max()
+            .unwrap_or(0);
+        let baseline = if pos.1 < 0.2 {
+            (3. - top as f32 + img.height() as f32 * (pos.1 - 0.12)).round() as i32
+        } else if pos.1 > 0.8 {
+            (img.height() as f32 - 3. - bottom as f32 + img.height() as f32 * (pos.1 - 0.87))
+                .round() as i32
+        } else {
+            (img.height() as f32 * pos.1 - (top + bottom) as f32 / 2.).round() as i32
+        };
         for (metrics, pixels) in glyphs {
             for gy in 0..metrics.height {
                 for gx in 0..metrics.width {
@@ -1374,13 +1701,11 @@ impl Renderer {
                     }
                     let alpha =
                         u32::from(pixels[gy * metrics.width + gx]) * u32::from(color[3]) / 255;
-                    let pixel = img.get_pixel_mut(px as u32, py as u32);
-                    for (c, target) in color.iter().take(3).enumerate() {
-                        pixel[c] = ((u32::from(*target) * alpha
-                            + u32::from(pixel[c]) * (255 - alpha))
-                            / 255) as u8;
+                    if alpha == 0 {
+                        continue;
                     }
-                    pixel[3] = 255;
+                    let pixel = img.get_pixel_mut(px as u32, py as u32);
+                    pixel.blend(&Rgba([color[0], color[1], color[2], alpha as u8]));
                 }
             }
             x += metrics.advance_width as i32;
@@ -1494,6 +1819,18 @@ pub fn color(value: &Value, default: [u8; 4]) -> [u8; 4] {
     }
     result
 }
+fn cacheable_media(path: &str, options: &Value, cache_videos: bool) -> bool {
+    repeatable_media(path, options)
+        && (cache_videos
+            || !Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| {
+                    ["gif", "mp4", "mkv", "webm", "mov", "avi"]
+                        .iter()
+                        .any(|format| e.eq_ignore_ascii_case(format))
+                }))
+}
 fn repeatable_media(path: &str, options: &Value) -> bool {
     options["loop"].as_bool() != Some(false)
         || !Path::new(path)
@@ -1560,7 +1897,7 @@ fn media_layout(image: &RgbaImage, w: u32, h: u32, media: &Value, default_mode: 
     overlay_rgba(&mut canvas, &resized, x, y);
     canvas
 }
-fn viewport_rect(source: (u32, u32), canvas: (u32, u32), view: &Value) -> (f64, f64, f64, f64) {
+pub fn viewport_rect(source: (u32, u32), canvas: (u32, u32), view: &Value) -> (f64, f64, f64, f64) {
     let (sw, sh) = (f64::from(source.0), f64::from(source.1));
     let (cw, ch) = (f64::from(canvas.0), f64::from(canvas.1));
     let scale = view["scale"]
@@ -1638,6 +1975,64 @@ pub fn default_config(page: Value) -> RenderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn paused_slideshow_keeps_its_image_across_recomposition_and_resumes_without_a_jump() {
+        let directory = tempfile::tempdir().unwrap();
+        let a = directory.path().join("a.png");
+        let b = directory.path().join("b.png");
+        RgbaImage::from_pixel(2, 2, Rgba([230, 10, 20, 255]))
+            .save(&a)
+            .unwrap();
+        RgbaImage::from_pixel(2, 2, Rgba([10, 230, 20, 255]))
+            .save(&b)
+            .unwrap();
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        let mut config = default_config(
+            json!({"background":{"media-paths":[a,b], "slideshow-interval":1}, "native-options":{"pause-animations":true}}),
+        );
+        let first = renderer.render(Kind::OriginalV2, &config).unwrap();
+        assert!(!renderer.animated && renderer.next_deadline().is_none());
+        std::thread::sleep(Duration::from_millis(1100));
+        config.revision += 1;
+        let edited = renderer.render(Kind::OriginalV2, &config).unwrap();
+        assert_eq!(first.tiles[0].identity, edited.tiles[0].identity);
+        assert!(!renderer.animated && renderer.next_deadline().is_none());
+        config.page["native-options"]["pause-animations"] = json!(false);
+        let resumed = renderer.render(Kind::OriginalV2, &config).unwrap();
+        assert_eq!(first.tiles[0].identity, resumed.tiles[0].identity);
+        assert!(renderer.animated && renderer.next_deadline().is_some());
+    }
+    #[test]
+    fn rolling_labels_change_pixels_reuse_rasters_and_respect_pause_and_disable() {
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        let mut config = default_config(json!({}));
+        config.page = json!({"keys":{"0x0":{"states":{"0":{"labels":{"center":{"text":"A long label that needs to scroll", "font-size":15,"font-family":"Roboto"}}}}}}});
+        let first = renderer.render(Kind::OriginalV2, &config).unwrap();
+        assert!(renderer.animated && renderer.next_deadline().is_some());
+        assert!(!renderer.rolling_layers.is_empty());
+        for (_, started, _) in renderer.rolling_layers.values_mut() {
+            *started -= Duration::from_secs(2);
+        }
+        let second = renderer.render(Kind::OriginalV2, &config).unwrap();
+        assert_ne!(first.tiles[0].identity, second.tiles[0].identity);
+        let raster = renderer.rolling_layers.values().next().unwrap().0.clone();
+        renderer.render(Kind::OriginalV2, &config).unwrap();
+        assert!(Arc::ptr_eq(
+            &raster,
+            &renderer.rolling_layers.values().next().unwrap().0
+        ));
+        config.page["native-options"]["pause-animations"] = json!(true);
+        let paused = renderer.render(Kind::OriginalV2, &config).unwrap();
+        assert!(!renderer.animated && renderer.next_deadline().is_none());
+        assert_eq!(
+            paused.tiles[0].identity,
+            renderer.render(Kind::OriginalV2, &config).unwrap().tiles[0].identity
+        );
+        config.page["native-options"]["rolling-labels"] = json!(false);
+        config.page["native-options"]["pause-animations"] = json!(false);
+        renderer.render(Kind::OriginalV2, &config).unwrap();
+        assert!(!renderer.animated && renderer.next_deadline().is_none());
+    }
     #[test]
     fn touchscreen_state_background_and_animation_reach_the_native_strip() {
         let directory = tempfile::tempdir().unwrap();
@@ -1859,7 +2254,7 @@ mod tests {
             renderer
                 .fonts
                 .borrow()
-                .get("Deckard definitely missing font")
+                .get("Deckard definitely missing font:400:normal")
                 .is_some_and(Option::is_none)
         );
     }

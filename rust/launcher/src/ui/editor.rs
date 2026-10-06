@@ -1,6 +1,23 @@
 use super::*;
 use controls::*;
 
+fn device_model_name(kind: deckard_core::Kind) -> &'static str {
+    use deckard_core::Kind::*;
+    match kind {
+        Original | OriginalV2 => "Stream Deck",
+        Mini | MiniMk2 | MiniDiscord | MiniMk2Module => "Stream Deck Mini",
+        Xl | XlV2 | XlV2Module => "Stream Deck XL",
+        Mk2 | Mk2Scissor | Mk2Module => "Stream Deck MK.2",
+        Plus => "Stream Deck +",
+        PlusXl => "Stream Deck + XL",
+        Neo => "Stream Deck Neo",
+        Studio => "Stream Deck Studio",
+        Pedal => "Stream Deck Pedal",
+        Mirabox293s => "Stream Dock 293S",
+        UlanziD200 => "Ulanzi D200",
+    }
+}
+
 impl Ui {
     pub(super) fn refresh(self: &Rc<Self>) {
         if self.signal.load(Ordering::Relaxed) || self.shared.lock().unwrap().quit {
@@ -32,6 +49,18 @@ impl Ui {
             self.definition_revision.set(revision);
             *self.definitions.borrow_mut() = definitions;
             self.force_reload.set(true);
+        }
+        for device in &devices {
+            if let Some((banner, previous)) = self.fps_banners.borrow().get(&device.serial) {
+                let enabled = settings["warnings"]["enable-fps-warnings"]
+                    .as_bool()
+                    .or_else(|| settings["ui"]["enable-fps-warnings"].as_bool())
+                    .unwrap_or(true);
+                let shown = enabled && device.low_fps;
+                if previous.replace(shown) != shown {
+                    banner.set_revealed(shown);
+                }
+            }
         }
         if show {
             self.bridge.hidden.store(false, Ordering::Relaxed);
@@ -78,7 +107,10 @@ impl Ui {
                 )
             })
             .collect::<Vec<_>>();
-        if *self.deck_signature.borrow() != signature {
+        if *self.deck_signature.borrow() != signature
+            || (devices.is_empty()
+                && self.content_stack.visible_child_name().as_deref() != Some("empty"))
+        {
             self.rebuild_decks(&devices, &settings);
             *self.deck_signature.borrow_mut() = signature;
         }
@@ -93,10 +125,12 @@ impl Ui {
             .collect::<Vec<_>>();
         if *self.page_names.borrow() != pages {
             self.rebuild_pages(&pages);
+            if let Some(manager) = self.page_manager.borrow().clone() {
+                manager.refresh(self);
+            }
             *self.page_names.borrow_mut() = pages;
         }
-        self.page_button
-            .set_label(&format!("Page: {}", self.selection.borrow().page));
+        self.page_label.set_text(&self.selection.borrow().page);
         self.deck_settings.set_sensitive(!devices.is_empty());
         if self.bridge.hidden.load(Ordering::Relaxed) {
             return;
@@ -135,51 +169,187 @@ impl Ui {
     fn rebuild_pages(self: &Rc<Self>, pages: &[String]) {
         let popover = gtk::Popover::new();
         let content = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        margins(&content, 12);
         let search = gtk::SearchEntry::builder()
             .placeholder_text("Search pages")
             .build();
         content.append(&search);
         let list = gtk::ListBox::new();
-        list.set_selection_mode(gtk::SelectionMode::None);
-        list.add_css_class("boxed-list");
+        list.set_selection_mode(gtk::SelectionMode::Single);
+        list.add_css_class("navigation-sidebar");
+        let hint = gtk::Label::builder()
+            .label("No pages found")
+            .margin_top(12)
+            .margin_bottom(12)
+            .build();
+        hint.add_css_class("dim-label");
+        list.set_placeholder(Some(&hint));
         let scroll = gtk::ScrolledWindow::builder()
-            .max_content_height(380)
+            .max_content_height(300)
             .propagate_natural_height(true)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .focusable(false)
             .child(&list)
             .build();
         content.append(&scroll);
         for page in pages {
-            let row = adw::ActionRow::builder()
-                .title(page)
-                .activatable(true)
-                .build();
+            let row = gtk::ListBoxRow::new();
             row.set_widget_name(page);
-            let weak = Rc::downgrade(self);
-            let page = page.clone();
-            let pop = popover.downgrade();
-            row.connect_activated(move |_| {
-                if let Some(ui) = weak.upgrade() {
-                    ui.change_page(&page);
-                }
-                if let Some(pop) = pop.upgrade() {
-                    pop.popdown();
-                }
-            });
+            row.set_child(Some(
+                &gtk::Label::builder()
+                    .label(page)
+                    .xalign(0.)
+                    .hexpand(true)
+                    .ellipsize(gtk::pango::EllipsizeMode::End)
+                    .max_width_chars(30)
+                    .build(),
+            ));
             list.append(&row);
+            if page == &self.selection.borrow().page {
+                list.select_row(Some(&row));
+            }
         }
+        let query = Rc::new(RefCell::new(String::new()));
+        let scores = Rc::new(RefCell::new(HashMap::<String, (u8, i32)>::new()));
+        let rank = {
+            let query = query.clone();
+            let scores = scores.clone();
+            move |name: &str| {
+                if let Some(rank) = scores.borrow().get(name) {
+                    return *rank;
+                }
+                let lower = name.to_lowercase();
+                let query = query.borrow();
+                let score = search::fuzzy_ratio(&lower, &query).round() as i32;
+                let tier = if query.is_empty() || lower.starts_with(&*query) {
+                    3
+                } else if lower.contains(&*query) {
+                    2
+                } else if score > 50 {
+                    1
+                } else {
+                    0
+                };
+                let rank = (tier, score);
+                scores.borrow_mut().insert(name.into(), rank);
+                rank
+            }
+        };
         list.set_filter_func({
-            let search = search.clone();
-            move |row| {
-                row.widget_name()
-                    .to_lowercase()
-                    .contains(&search.text().to_lowercase())
+            let rank = rank.clone();
+            move |row| rank(&row.widget_name()).0 > 0
+        });
+        list.set_sort_func({
+            let rank = rank.clone();
+            let query = query.clone();
+            move |a, b| {
+                let names = (a.widget_name(), b.widget_name());
+                let order = if query.borrow().is_empty() {
+                    search::natural_cmp(&names.0, &names.1)
+                } else {
+                    rank(&names.1)
+                        .cmp(&rank(&names.0))
+                        .then_with(|| search::natural_cmp(&names.0, &names.1))
+                };
+                order.into()
             }
         });
         let weak_list = list.downgrade();
-        search.connect_search_changed(move |_| {
+        search.connect_search_changed(move |search| {
+            *query.borrow_mut() = search.text().to_lowercase();
+            scores.borrow_mut().clear();
             if let Some(list) = weak_list.upgrade() {
                 list.invalidate_filter();
+                list.invalidate_sort();
+                if let Some(row) = first_visible_row(&list) {
+                    list.select_row(Some(&row));
+                }
+            }
+        });
+        let weak = Rc::downgrade(self);
+        let pop = popover.downgrade();
+        list.connect_row_activated(move |_, row| {
+            if let Some(ui) = weak.upgrade() {
+                ui.change_page(&row.widget_name());
+            }
+            if let Some(pop) = pop.upgrade() {
+                pop.popdown();
+            }
+        });
+        let keys = gtk::EventControllerKey::new();
+        let weak_list = list.downgrade();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            let Some(list) = weak_list.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if key == gdk::Key::Return {
+                if let Some(row) = list.selected_row() {
+                    row.emit_by_name::<()>("activate", &[]);
+                }
+                return glib::Propagation::Stop;
+            }
+            if key == gdk::Key::Up || key == gdk::Key::Down {
+                let mut rows = Vec::new();
+                let mut child = list.first_child();
+                while let Some(widget) = child {
+                    child = widget.next_sibling();
+                    if let Ok(row) = widget.downcast::<gtk::ListBoxRow>()
+                        && row.is_visible()
+                    {
+                        rows.push(row);
+                    }
+                }
+                if !rows.is_empty() {
+                    let current = rows
+                        .iter()
+                        .position(|row| Some(row) == list.selected_row().as_ref())
+                        .unwrap_or(0);
+                    let next = if key == gdk::Key::Down {
+                        (current + 1).min(rows.len() - 1)
+                    } else {
+                        current.saturating_sub(1)
+                    };
+                    list.select_row(Some(&rows[next]));
+                }
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        search.add_controller(keys);
+        let weak = Rc::downgrade(self);
+        let weak_list = list.downgrade();
+        let weak_search = search.downgrade();
+        let weak_scroll = scroll.downgrade();
+        popover.connect_show(move |_| {
+            if let (Some(ui), Some(list)) = (weak.upgrade(), weak_list.upgrade()) {
+                let active = ui.selection.borrow().page.clone();
+                let mut child = list.first_child();
+                while let Some(widget) = child {
+                    child = widget.next_sibling();
+                    if let Ok(row) = widget.downcast::<gtk::ListBoxRow>()
+                        && row.widget_name() == active
+                    {
+                        list.select_row(Some(&row));
+                        let weak_row = row.downgrade();
+                        let scroll = weak_scroll.clone();
+                        glib::idle_add_local_once(move || {
+                            if let (Some(row), Some(scroll)) =
+                                (weak_row.upgrade(), scroll.upgrade())
+                            {
+                                let adjustment = scroll.vadjustment();
+                                adjustment.set_value(
+                                    row.compute_bounds(scroll.child().as_ref().unwrap())
+                                        .map_or(0., |r| r.y() as f64)
+                                        .min(adjustment.upper() - adjustment.page_size())
+                                        .max(0.),
+                                );
+                            }
+                        });
+                        break;
+                    }
+                }
+            }
+            if let Some(search) = weak_search.upgrade() {
+                search.grab_focus();
             }
         });
         popover.set_child(Some(&content));
@@ -248,12 +418,30 @@ impl Ui {
             self.deck_stack.remove(&child);
         }
         self.previews.borrow_mut().clear();
+        let empty = devices.is_empty();
+        self.content_stack
+            .set_visible_child_name(if empty { "empty" } else { "decks" });
+        self.deck_titles
+            .set_visible_child_name(if empty { "empty" } else { "decks" });
+        self.split.set_collapsed(empty);
+        if empty {
+            self.split.set_show_content(true);
+        }
+        self.deck_settings.set_visible(!empty);
+        self.main_menu.set_visible(true);
+        for name in ["store", "settings"] {
+            if let Some(action) = self
+                .window
+                .lookup_action(name)
+                .and_downcast::<gio::SimpleAction>()
+            {
+                action.set_enabled(!empty);
+            }
+        }
         if devices.is_empty() {
-            let page=adw::StatusPage::builder().title("No Stream Deck connected").description("Connect your device to start editing. Your saved pages remain available from the menu.").icon_name("input-keyboard-symbolic").build();
-            self.deck_stack
-                .add_titled(&page, Some("disconnected"), "Deckard");
             self.preview.set_paintable(None::<&gdk::Paintable>);
         }
+        self.fps_banners.borrow_mut().clear();
         for device in devices {
             let serial = &device.serial;
             let rotation = settings["devices"][serial]["rotation"]
@@ -269,17 +457,14 @@ impl Ui {
                 let input = render::logical_input(device.kind, key, rotation);
                 let index = render::logical_index(device.kind, key, rotation);
                 let image = PreviewImage::new(75, 75);
+                image.set_hexpand(true);
+                image.set_vexpand(true);
                 image.add_css_class("key-image");
                 image.add_css_class("key-button");
                 image.set_overflow(gtk::Overflow::Hidden);
-                let button = gtk::Button::builder()
-                    .child(&image)
-                    .tooltip_text(format!("Key {}", input))
-                    .build();
-                button.add_css_class("deckard-key");
-                button.set_widget_name(&format!("key-{serial}-{input}"));
+                image.set_widget_name(&format!("key-{serial}-{input}"));
                 let frame = gtk::Frame::new(None);
-                frame.set_child(Some(&button));
+                frame.set_child(Some(&image));
                 frame.add_css_class("key-button-frame-hidden");
                 grid.attach(
                     &frame,
@@ -288,7 +473,7 @@ impl Ui {
                     1,
                     1,
                 );
-                self.connect_input(&button, serial, "keys", &input);
+                self.connect_input(&image, serial, "keys", &input);
                 self.previews.borrow_mut().push(Preview {
                     serial: serial.clone(),
                     physical: key,
@@ -300,18 +485,15 @@ impl Ui {
                 });
             }
             if device.kind.lcd_strip_size().is_some() {
-                let image = PreviewImage::new(i32::from(cols) * 101 - 26, 50);
-                image.add_css_class("deckard-strip");
+                let image = if rotation % 180 == 90 {
+                    PreviewImage::new(48, 384)
+                } else {
+                    PreviewImage::new(384, 48)
+                };
+                image.add_css_class("plus-screenbar-image");
                 image.set_overflow(gtk::Overflow::Hidden);
-                let button = gtk::Button::builder()
-                    .child(&image)
-                    .tooltip_text("Touchscreen")
-                    .build();
-                button.add_css_class("deckard-key");
-                button.set_halign(gtk::Align::Center);
-
                 self.connect_input(
-                    &button,
+                    &image,
                     serial,
                     if format!("{:?}", device.kind) == "Neo" {
                         "infobar"
@@ -322,7 +504,7 @@ impl Ui {
                 );
                 let frame = gtk::Frame::new(None);
                 frame.set_halign(gtk::Align::Center);
-                frame.set_child(Some(&button));
+                frame.set_child(Some(&image));
                 frame.add_css_class("key-button-frame-hidden");
                 body.append(&frame);
                 self.previews.borrow_mut().push(Preview {
@@ -342,14 +524,16 @@ impl Ui {
             }
             if device.kind.encoder_count() > 0 {
                 let dials = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-                dials.set_halign(gtk::Align::Center);
+                dials.set_hexpand(true);
+                dials.set_homogeneous(true);
                 body.append(&dials);
                 for index in 0..device.kind.encoder_count() {
-                    let button = gtk::Button::new();
-                    button.add_css_class("deckard-dial");
+                    let button = gtk::Image::new();
+                    button.add_css_class("dial");
                     button.set_widget_name(&format!("dial-{serial}-{index}"));
                     button.set_tooltip_text(Some(&format!("Dial {}", index + 1)));
                     let frame = gtk::Frame::new(None);
+                    frame.set_halign(gtk::Align::Center);
                     frame.add_css_class("dial-frame");
                     frame.add_css_class("dial-frame-hidden");
                     frame.set_child(Some(&button));
@@ -405,15 +589,39 @@ impl Ui {
                 .build();
             let title = settings["devices"][serial]["name"]
                 .as_str()
+                .filter(|name| !name.trim().is_empty())
                 .map(str::to_owned)
                 .unwrap_or_else(|| {
-                    format!(
-                        "{} ({:?})",
-                        if device.fake { "Fake Deck" } else { serial },
-                        device.kind
-                    )
+                    let model = device_model_name(device.kind);
+                    if serial == "remote-deck-1" {
+                        "Remote Deck 1".into()
+                    } else if device.fake {
+                        let index = serial
+                            .rsplit('-')
+                            .next()
+                            .and_then(|s| s.parse::<usize>().ok())
+                            .unwrap_or(0)
+                            + 1;
+                        format!("Fake Deck {index} ({model})")
+                    } else {
+                        model.into()
+                    }
                 });
-            self.deck_stack.add_titled(&scroll, Some(serial), &title);
+            let view = gtk::Stack::builder().hexpand(true).vexpand(true).build();
+            view.add_named(&scroll, Some("key-grid"));
+            if self.deck_settings_visible.get() {
+                view.add_named(&self.deck_settings_view(serial), Some("deck-settings"));
+                view.set_visible_child_name("deck-settings");
+            }
+            let main = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            let banner = adw::Banner::builder().title("Low FPS detected. This might be caused by your background video. This may dissapear after the caching is finished.").button_label("Dismiss").revealed(device.low_fps).build();
+            banner.connect_button_clicked(|banner| banner.set_revealed(false));
+            self.fps_banners
+                .borrow_mut()
+                .insert(serial.clone(), (banner.clone(), Cell::new(device.low_fps)));
+            main.append(&banner);
+            main.append(&view);
+            self.deck_stack.add_titled(&main, Some(serial), &title);
         }
         self.deck_stack
             .set_visible_child_name(&self.selection.borrow().serial);
@@ -421,7 +629,7 @@ impl Ui {
     }
     fn connect_input(
         self: &Rc<Self>,
-        button: &gtk::Button,
+        button: &impl IsA<gtk::Widget>,
         serial: &str,
         family: &str,
         input: &str,
@@ -431,15 +639,31 @@ impl Ui {
         let family = family.to_owned();
         let input = input.to_owned();
         let owner = (serial.clone(), family.clone(), input.clone());
-        button.connect_clicked(move |_| {
+        button.set_focusable(true);
+        let primary = gtk::GestureClick::new();
+        primary.set_button(1);
+        let widget = button.clone().upcast::<gtk::Widget>().downgrade();
+        primary.connect_pressed(move |_, count, _, _| {
             if let Some(ui) = weak.upgrade() {
                 ui.select_input(&owner.0, &owner.1, &owner.2);
+                if let Some(widget) = widget.upgrade() {
+                    widget.grab_focus();
+                }
+                if count == 2
+                    && ui.shared.lock().unwrap().docs.settings["ui"]["emulate-at-double-click"]
+                        .as_bool()
+                        .unwrap_or(true)
+                {
+                    ui.send_event(&owner.0, &owner.1, &owner.2, "press", 1);
+                    ui.send_event(&owner.0, &owner.1, &owner.2, "release", 0);
+                }
             }
         });
+        button.add_controller(primary);
         let menu_click = gtk::GestureClick::new();
         menu_click.set_button(3);
         let weak = Rc::downgrade(self);
-        let weak_button = button.downgrade();
+        let weak_button = button.clone().upcast::<gtk::Widget>().downgrade();
         let owner = (serial.clone(), family.clone(), input.clone());
         menu_click.connect_pressed(move |_, _, x, y| {
             let (Some(ui), Some(button)) = (weak.upgrade(), weak_button.upgrade()) else {
@@ -448,14 +672,16 @@ impl Ui {
             ui.select_input(&owner.0, &owner.1, &owner.2);
             let menu = gio::Menu::new();
             for (title, action) in [
-                ("Copy state", "win.copy-input"),
-                ("Cut state", "win.cut-input"),
-                ("Paste state", "win.paste-input"),
-                ("Clear state", "win.clear-input"),
+                ("Copy", "win.copy-input"),
+                ("Cut", "win.cut-input"),
+                ("Paste", "win.paste-input"),
+                ("Remove", "win.clear-input"),
+                ("Update", "win.update-input"),
             ] {
                 menu.append(Some(title), Some(action));
             }
             let popover = gtk::PopoverMenu::from_model(Some(&menu));
+            popover.set_has_arrow(false);
             popover.set_parent(&button);
             popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             popover.connect_closed(|popover| popover.unparent());
@@ -532,6 +758,41 @@ impl Ui {
             }
             if let Some(tile) = tile {
                 if preview.identity.get() != Some(tile.identity) {
+                    // An unconfigured touch LCD is transparent in upstream's
+                    // editor. Its physical device frame still remains black.
+                    let blank_strip = preview.physical == 255
+                        && tile.rgb.iter().all(|channel| *channel == 0)
+                        && self
+                            .shared
+                            .lock()
+                            .unwrap()
+                            .config(&device.serial)
+                            .is_some_and(|config| {
+                                let state = render::effective_input(
+                                    &config,
+                                    &preview.family,
+                                    &preview.input,
+                                )["states"]["0"]
+                                    .clone();
+                                config.page["background"]["media-path"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .is_empty()
+                                    && config.page["background"]["media-paths"]
+                                        .as_array()
+                                        .is_none_or(Vec::is_empty)
+                                    && state["media"]["path"].as_str().unwrap_or("").is_empty()
+                                    && state["background"]["media-path"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .is_empty()
+                                    && state["background"]["color"].is_null()
+                            });
+                    if blank_strip {
+                        preview.image.set_paintable(None::<&gdk::Paintable>);
+                        preview.identity.set(Some(tile.identity));
+                        continue;
+                    }
                     let bytes = glib::Bytes::from_owned(tile.rgb.clone());
                     let texture = gdk::MemoryTexture::new(
                         tile.width as i32,
@@ -579,6 +840,15 @@ impl Ui {
                     )
                 };
                 let bytes = glib::Bytes::from_owned(strip.rgb.clone());
+                if strip.rgb.iter().all(|channel| *channel == 0)
+                    && self.previews.borrow().iter().any(|preview| {
+                        preview.physical == 255 && preview.image.paintable().is_none()
+                    })
+                {
+                    self.preview.set_paintable(None::<&gdk::Paintable>);
+                    self.dial_preview.set(Some((index, strip.identity)));
+                    return;
+                }
                 let offset = (y * strip.width as usize + x) * 3;
                 let bytes = glib::Bytes::from_bytes(&bytes, offset..);
                 let texture = gdk::MemoryTexture::new(
@@ -601,9 +871,30 @@ impl Ui {
         self.preview.set_paintable(None::<&gdk::Paintable>);
         self.dial_preview.set(None);
     }
-    fn rebuild_editor(self: &Rc<Self>, document: &Value) {
+    pub(super) fn rebuild_editor(self: &Rc<Self>, document: &Value) {
         clear(&self.state_box);
         let selection = self.selection.borrow().clone();
+        let changed_input = self.loaded_selection.borrow().as_ref() != Some(&selection);
+        *self.loaded_selection.borrow_mut() = Some(selection.clone());
+        let touchscreen = matches!(selection.family.as_str(), "touchscreens" | "infobar");
+        self.state_box
+            .parent()
+            .and_then(|viewport| viewport.parent())
+            .unwrap()
+            .set_visible(!touchscreen);
+        if touchscreen && self.controls.parent().as_ref() != Some(self.screen_clamp.upcast_ref()) {
+            self.editor_scroll.set_child(None::<&gtk::Widget>);
+            self.screen_clamp.set_child(Some(&self.controls));
+            self.editor_scroll.set_child(Some(&self.screen_clamp));
+        } else if !touchscreen
+            && self.controls.parent().as_ref() == Some(self.screen_clamp.upcast_ref())
+        {
+            self.screen_clamp.set_child(None::<&gtk::Widget>);
+            self.editor_scroll.set_child(Some(&self.controls));
+        }
+        if let Some(parent) = self.remove_state.parent().and_downcast::<gtk::Box>() {
+            parent.remove(&self.remove_state);
+        }
         let mut states = document[&selection.family][&selection.input]["states"]
             .as_object()
             .map(|s| {
@@ -616,28 +907,34 @@ impl Ui {
         if states.is_empty() {
             states.push(0);
         }
+        let stack = gtk::Stack::new();
         for state in &states {
-            let button = gtk::ToggleButton::with_label(&format!("State {}", state + 1));
-            button.add_css_class("deckard-state");
-            button.set_active(*state == selection.state);
-            button.set_widget_name(&format!("state-{state}"));
-            let weak = Rc::downgrade(self);
-            let sel = selection.clone();
-            let number = *state;
-            button.connect_clicked(move |_| {
-                if let Some(ui) = weak.upgrade() {
-                    ui.selection.borrow_mut().state = number;
-                    ui.force_reload.set(true);
-                    let mut params = sel.params();
-                    params["state"] = json!(number);
-                    if !sel.serial.is_empty() {
-                        ui.command("change-state", params, "", true);
-                    }
-                    ui.refresh();
-                }
-            });
-            self.state_box.append(&button);
+            stack.add_titled(
+                &gtk::Box::new(gtk::Orientation::Horizontal, 0),
+                Some(&state.to_string()),
+                &format!("State {}", state + 1),
+            );
         }
+        stack.set_visible_child_name(&selection.state.to_string());
+        let switcher = gtk::StackSwitcher::builder().stack(&stack).build();
+        switcher.add_css_class("state-switcher");
+        let weak = Rc::downgrade(self);
+        let owner = selection.clone();
+        stack.connect_visible_child_name_notify(move |stack| {
+            if let (Some(ui), Some(state)) = (weak.upgrade(), stack.visible_child_name())
+                && let Ok(number) = state.parse::<usize>()
+            {
+                ui.selection.borrow_mut().state = number;
+                ui.force_reload.set(true);
+                let mut params = owner.params();
+                params["state"] = json!(number);
+                if !owner.serial.is_empty() {
+                    ui.command("change-state", params, "", true);
+                }
+                ui.refresh();
+            }
+        });
+        self.state_box.append(&switcher);
         let weak = Rc::downgrade(self);
         let plus = button("", "list-add-symbolic", move || {
             if let Some(ui) = weak.upgrade() {
@@ -646,137 +943,123 @@ impl Ui {
         });
         plus.set_widget_name("state-add");
         self.state_box.append(&plus);
-        if states.len() > 1 {
-            let weak = Rc::downgrade(self);
-            self.state_box
-                .append(&button("", "list-remove-symbolic", move || {
-                    if let Some(ui) = weak.upgrade() {
-                        ui.change_states(false);
-                    }
-                }));
-        }
-        // The state switcher and selected-key picture are persistent; replace
-        // only document controls, and keep each group's expansion state.
+        self.remove_state.set_visible(states.len() > 1);
         while let Some(child) = self.controls.last_child() {
             if child == self.preview_host.clone().upcast::<gtk::Widget>() {
                 break;
             }
             self.controls.remove(&child);
         }
-        let (layout, expander) = self.editor_group("Layout", "Layout for this key");
-        expander.add_row(&self.bind_file("Image, GIF or video", &["media", "path"]));
-        expander.add_row(&self.bind_number("Size", &["media", "size"], 1., 0., 2., 0.01));
-        expander.add_row(&self.bind_number(
-            "Horizontal alignment",
-            &["media", "halign"],
-            0.,
-            -1.,
-            1.,
-            0.05,
-        ));
-        expander.add_row(&self.bind_number(
-            "Vertical alignment",
-            &["media", "valign"],
-            0.,
-            -1.,
-            1.,
-            0.05,
-        ));
-        expander.add_row(&self.bind_number(
-            "Animation FPS cap · 0 = Auto",
-            &["media", "fps"],
-            0.,
-            0.,
-            120.,
-            1.,
-        ));
-        expander.add_row(&self.bind_toggle("Loop animation", &["media", "loop"], true));
-        self.controls.append(&layout);
-        let (background, expander) = self.editor_group("Background", "Background for this key");
-        expander.add_row(&self.bind_color("Color", &["background", "color"], [0, 0, 0, 255]));
-        self.controls.append(&background);
-        let (labels, expander) = self.editor_group("Labels", "Labels for this key");
-        for (position, title) in [("top", "Top"), ("center", "Center"), ("bottom", "Bottom")] {
-            let (_, label) = controls::expander(title, "");
-            label.add_row(&self.bind_text("Text", &["labels", position, "text"], ""));
-            label.add_row(&self.bind_text(
-                "Font family",
-                &["labels", position, "font-family"],
-                "Roboto",
-            ));
-            label.add_row(&self.bind_number(
-                "Font size",
-                &["labels", position, "font-size"],
-                14.,
-                6.,
-                72.,
-                1.,
-            ));
-            label.add_row(&self.bind_color(
-                "Text color",
-                &["labels", position, "color"],
-                [255, 255, 255, 255],
-            ));
-            label.add_row(&self.bind_color(
-                "Outline color",
-                &["labels", position, "outline-color"],
-                [0, 0, 0, 255],
-            ));
-            label.add_row(&self.bind_number(
-                "Outline width",
-                &["labels", position, "outline-width"],
-                2.,
-                0.,
-                10.,
-                1.,
-            ));
-            expander.add_row(&label);
-        }
-        self.controls.append(&labels);
-        self.action_rows();
-        let (more, expander) = self.editor_group("More", "Sticky inputs and testing");
-        let weak = Rc::downgrade(self);
-        expander.add_row(&toggle(
-            "Edit across all pages",
-            selection.sticky,
-            move |enabled| {
-                if let Some(ui) = weak.upgrade() {
-                    ui.selection.borrow_mut().sticky = enabled;
-                    ui.force_reload.set(true);
-                    ui.refresh();
-                }
+        self.screen_title.set_visible(touchscreen);
+        self.preview_host.set_visible(!touchscreen);
+        self.preview.set_logical_size(
+            if selection.family == "dials" {
+                200
+            } else {
+                175
             },
-        ));
-        let test = adw::ActionRow::builder()
-            .title("Test selected input")
-            .build();
-        let weak = Rc::downgrade(self);
-        let sel = selection.clone();
-        let run = button("Test", "media-playback-start-symbolic", move || {
-            if let Some(ui) = weak.upgrade() {
-                if sel.family == "touchscreens" {
-                    ui.send_event(&sel.serial, &sel.family, &sel.input, "short-touch", 1);
-                } else {
-                    ui.send_event(&sel.serial, &sel.family, &sel.input, "press", 1);
-                    ui.send_event(&sel.serial, &sel.family, &sel.input, "release", 0);
-                }
-            }
+            if selection.family == "dials" {
+                100
+            } else {
+                175
+            },
+        );
+        self.preview.remove_css_class("icon-selector-image-key");
+        self.preview.remove_css_class("icon-selector-image-dial");
+        self.preview.add_css_class(if selection.family == "dials" {
+            "icon-selector-image-dial"
+        } else {
+            "icon-selector-image-key"
         });
-        test.add_suffix(&run);
-        expander.add_row(&test);
-        let weak = Rc::downgrade(self);
-        let advanced = adw::ActionRow::builder()
-            .title("Advanced state")
-            .activatable(true)
-            .build();
-        advanced.connect_activated(move |_| {
-            if let Some(ui) = weak.upgrade() {
-                ui.advanced_state();
-            }
+        self.preview.remove_css_class("icon-selector-image-key");
+        self.preview.remove_css_class("icon-selector-image-dial");
+        self.preview.add_css_class(if selection.family == "dials" {
+            "icon-selector-image-dial"
+        } else {
+            "icon-selector-image-key"
         });
-        expander.add_row(&advanced);
-        self.controls.append(&more);
-        self.sidebar.set_visible_child_name("editor");
+        self.remove_icon.set_visible(
+            self.draft.borrow()["media"]["path"]
+                .as_str()
+                .is_some_and(|p| !p.is_empty()),
+        );
+        if !touchscreen {
+            let (layout, expander) = self.editor_group("Layout", "Layout for this key");
+            expander.add_row(&self.upstream_spin_row(
+                "Size (%)",
+                &["media", "size"],
+                1.,
+                0.,
+                200.,
+                1.,
+                100.,
+            ));
+            expander.add_row(&self.upstream_spin_row(
+                "VAlign",
+                &["media", "valign"],
+                0.,
+                -1.,
+                1.,
+                0.1,
+                1.,
+            ));
+            expander.add_row(&self.upstream_spin_row(
+                "HAlign",
+                &["media", "halign"],
+                0.,
+                -1.,
+                1.,
+                0.1,
+                1.,
+            ));
+            self.append_editor_panel(&layout, 90);
+        }
+        let (background, expander) = self.editor_group("Background", "Background for this key");
+        expander.add_row(&self.upstream_color_row("Color", &["background", "color"], [0, 0, 0, 0]));
+        if touchscreen {
+            expander.add_row(&self.upstream_media_row());
+        }
+        let animated = self.draft.borrow()["media"]["path"]
+            .as_str()
+            .is_some_and(|path| {
+                let ext = std::path::Path::new(path)
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                matches!(ext.as_str(), "gif" | "mp4" | "webm" | "mov" | "mkv" | "avi")
+            });
+        if animated {
+            if touchscreen {
+                expander.add_row(&self.upstream_loop_row());
+            }
+            expander.add_row(&self.upstream_spin_row(
+                "FPS",
+                &["media", "fps"],
+                0.,
+                0.,
+                120.,
+                1.,
+                1.,
+            ));
+        }
+        self.append_editor_panel(&background, 25);
+        if !touchscreen {
+            let (labels, expander) = self.editor_group("Labels", "Labels for this key");
+            for (position, title) in [("top", "Top"), ("center", "Center"), ("bottom", "Bottom")] {
+                expander.add_row(&self.upstream_label_row(position, title));
+            }
+            self.append_editor_panel(&labels, 25);
+        }
+        self.action_rows();
+        if changed_input {
+            self.editor_scroll.vadjustment().set_value(0.);
+        }
+        if touchscreen {
+            self.controls.append(&self.remove_state);
+        } else {
+            self.editor_body.append(&self.remove_state);
+        }
     }
     pub(super) fn editor_group(
         self: &Rc<Self>,
@@ -888,4 +1171,17 @@ impl Ui {
             }),
         });
     }
+}
+
+fn first_visible_row(list: &gtk::ListBox) -> Option<gtk::ListBoxRow> {
+    let mut child = list.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if let Ok(row) = widget.downcast::<gtk::ListBoxRow>()
+            && row.is_visible()
+        {
+            return Some(row);
+        }
+    }
+    None
 }

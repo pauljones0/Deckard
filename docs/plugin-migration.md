@@ -4,7 +4,7 @@ Deckard 0.5.0 implements all 56 registered actions from the five plugins recomme
 
 ## Migrate saved pages
 
-Open **Settings → Inspect legacy actions**. The report identifies each supported conversion and each remaining action by document, input and state. Click **Migrate supported actions** to apply those conversions. Migration scans `pages/*.json` and `sticky/*.json`, including every saved state and all input families. Existing native actions and installed native executable plugins continue working.
+Run `deckard --inspect-legacy-actions`. The report identifies supported conversions and remaining actions by document, input and state. Run `deckard --migrate-legacy-actions` to apply supported conversions. Migration scans `pages/*.json` and `sticky/*.json`, including every saved state and all input families. Existing native actions and installed native executable plugins continue working.
 
 Equivalent CLI, using the same data directory as your running application:
 
@@ -41,9 +41,9 @@ Long commands and delays execute outside the input dispatcher. Page changes, dis
 
 ## Input and OBS setup
 
-DEB/RPM install the deck and `uinput` rules. Portable builds provide **Settings → Enable USB access**, which also enables native input access. Log out/in if your session has not acquired `/dev/uinput` access. Evdev hotkeys and mouse controls work through Linux uinput. Text/easy hotkeys use bundled `wtype` on Wayland or `xdotool` on X11; Wayland virtual-keyboard support depends on your compositor.
+DEB/RPM install the deck and `uinput` rules. Current distro-native packages install both rule sets. Log out/in if your session has not acquired `/dev/uinput` access. Evdev hotkeys and mouse controls work through Linux uinput. Text/easy hotkeys use system `wtype` on Wayland or `xdotool` on X11; Wayland virtual-keyboard support depends on your compositor.
 
-For OBS, enable **Tools → WebSocket Server Settings**. Use **Settings → OBS connection profiles** to add/test a profile and refresh available scenes, inputs, collections, items and filters. Media players also have a refreshable chooser. Advanced profiles can be edited in Settings JSON:
+For OBS, enable **Tools → WebSocket Server Settings**. Use **Settings → Plugins → OBS → Open Settings** to add/test profiles. OBS action forms fetch scenes, inputs, collections and the selected scene’s items/filters in the background. Advanced profiles can be edited in Settings JSON:
 
 ```json
 {

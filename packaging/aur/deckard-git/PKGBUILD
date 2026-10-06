@@ -6,7 +6,7 @@ pkgdesc='Native Rust controller for Elgato Stream Decks'
 arch=('x86_64' 'aarch64')
 url='https://github.com/pauljones0/Deckard'
 license=('GPL-3.0-or-later')
-depends=('glibc' 'gcc-libs' 'systemd-libs' 'gtk4>=4.16' 'libadwaita>=1.6' 'adwaita-icon-theme' 'ffmpeg' 'libpulse' 'iputils' 'hicolor-icon-theme' 'xdg-utils' 'xdotool' 'wtype')
+depends=('glibc' 'gcc-libs' 'systemd-libs' 'gtk4>=4.16' 'libadwaita>=1.7' 'adwaita-icon-theme' 'ffmpeg' 'libpulse' 'iputils' 'hicolor-icon-theme' 'xdg-utils' 'xdotool' 'wtype')
 makedepends=('git' 'rust' 'cargo' 'cmake' 'nasm' 'pkgconf')
 optdepends=('xdg-desktop-portal: native file dialogs' 'kdotool: KDE automatic page switching')
 provides=('deckard')
@@ -39,6 +39,9 @@ package() {
   install -Dm644 packaging/linux/deckard.desktop "$pkgdir/usr/share/applications/deckard.desktop"
   install -Dm644 Assets/icons/hicolor/512x512/apps/io.github.nazbert.Deckard.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/io.github.nazbert.Deckard.png"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/deckard/LICENSE"
+  install -d "$pkgdir/usr/share/deckard/icons" "$pkgdir/usr/share/licenses/deckard/artwork"
+  cp -r Assets/icons/. "$pkgdir/usr/share/deckard/icons/"
+  find Assets/NativeActions -name '*.txt' -exec cp --parents '{}' "$pkgdir/usr/share/licenses/deckard/artwork/" \;
   install -d "$pkgdir/usr/bin"
   ln -s /usr/lib/deckard/bin/deckard-bin "$pkgdir/usr/bin/deckard"
 }

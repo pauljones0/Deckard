@@ -204,3 +204,16 @@ High-rate GIF CPU reductions are clear across trial ranges. The 10 FPS median is
 ```
 
 Use an available shared font and short output paths; run one benchmark at a time without host compilation or packaging. [Provenance](results/2026-10-06/native-0.8/provenance.json) records frozen source and executable hashes. Both timing metadata files report a clean source tree. [Diagnostics](results/2026-10-06/native-0.8/diagnostics.json) and [memory maps](results/2026-10-06/native-0.8/memory-maps.json) are separate from performance timing. Physical USB/panel refresh, ARM performance and long-duration soaks remain outside these measurements.
+
+## Direct-upstream UI captures (0.10.0)
+
+`ui_parity.py` captures both running applications in a fresh private Weston desktop-shell session with GTK Cairo, a 1400×900 main window and the same Liberation Sans/Plus fixture. Python is developer reference tooling only. Use the reference dependencies and source exports described above, plus Pillow and an extracted Weston bundle with its desktop shell.
+
+```sh
+.venv/bin/python benchmarks/ui_parity.py --case main --output target/ui-proof-main
+.venv/bin/python benchmarks/ui_parity.py --case pages --output target/ui-proof-pages
+```
+
+Other cases cover no devices, settings pages, assets, the action form, dials, touchstrip, labels, deck settings and the common-plugin chooser. Output includes both PNGs, mapped-widget JSON, logs and a comparison report tied to the native executable hash. A matched screenshot is not proof of an interaction or physical USB behavior; the native GTK workflow and engine tests cover edits separately.
+
+For `chooser-populated`, cache all five audited plugin repositories under `target/benchmarks/{OSPlugin,DeckPlugin,MediaPlugin,OBSPlugin,VolumeMixer}`. The reference Python environment additionally needs the OBS backend requirements. The script starts a private PulseAudio null-sink server in the cached CachyOS builder image, without connecting to your desktop audio server, and rejects captures where any reference plugin failed to initialize. No source application is modified.

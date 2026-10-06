@@ -272,47 +272,89 @@ pub(crate) fn autostart(enable: bool) -> Result<()> {
     }
     Ok(())
 }
-pub(crate) fn create_icon_pack(
+pub(crate) fn create_asset_pack(
     source: &std::path::Path,
     root: &std::path::Path,
     name: &str,
-) -> Result<()> {
+    description: &str,
+    banner: Option<&std::path::Path>,
+    kind: &str,
+) -> Result<PathBuf> {
     model::valid_name(name)?;
-    let destination = root.join("icons-native").join(name);
-    anyhow::ensure!(!destination.exists(), "icon pack already exists");
-    let parent = destination.parent().unwrap();
-    std::fs::create_dir_all(parent)?;
-    let staging = tempfile_dir(parent)?;
-    let mut count = 0;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        if entry.file_type()?.is_file()
-            && entry.path().extension().is_some_and(|e| {
-                ["png", "jpg", "jpeg", "webp", "gif", "svg"]
+    let parent = root.join(match kind {
+        "wallpaper" => "wallpapers-native",
+        "sdplusbar" => "sdplusbar-native",
+        _ => "icons-native",
+    });
+    let destination = parent.join(name);
+    anyhow::ensure!(!destination.exists(), "pack already exists");
+    std::fs::create_dir_all(&parent)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".pack-")
+        .tempdir_in(&parent)?;
+    let extracted = tempfile::tempdir()?;
+    let source = if source.is_file() {
+        deckard_core::store::extract(&std::fs::read(source)?, extracted.path())?;
+        extracted.path()
+    } else {
+        source
+    };
+    fn copy(
+        directory: &std::path::Path,
+        base: &std::path::Path,
+        target: &std::path::Path,
+        count: &mut usize,
+        bytes: &mut u64,
+        depth: usize,
+    ) -> Result<()> {
+        anyhow::ensure!(depth < 20, "pack folders too deep");
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            let ty = entry.file_type()?;
+            if ty.is_dir() {
+                copy(&entry.path(), base, target, count, bytes, depth + 1)?;
+            } else if ty.is_file()
+                && entry.path().extension().is_some_and(|e| {
+                    [
+                        "png", "jpg", "jpeg", "webp", "gif", "svg", "bmp", "mp4", "webm",
+                    ]
                     .iter()
-                    .any(|x| e == *x)
-            })
-        {
-            anyhow::ensure!(
-                entry.metadata()?.len() <= 32 * 1024 * 1024,
-                "icon exceeds size limit"
-            );
-            std::fs::copy(entry.path(), staging.join(entry.file_name()))?;
-            count += 1;
-            anyhow::ensure!(count <= 2000, "too many icons");
+                    .any(|x| e.to_string_lossy().eq_ignore_ascii_case(x))
+                })
+            {
+                let length = entry.metadata()?.len();
+                anyhow::ensure!(length <= 32 * 1024 * 1024, "asset exceeds size limit");
+                *bytes += length;
+                *count += 1;
+                anyhow::ensure!(
+                    *bytes <= 256 * 1024 * 1024 && *count <= 50000,
+                    "pack exceeds import limits"
+                );
+                let path = entry.path();
+                let target = target.join(path.strip_prefix(base)?);
+                std::fs::create_dir_all(target.parent().unwrap())?;
+                std::fs::copy(path, target)?;
+            }
         }
+        Ok(())
+    }
+    let mut count = 0;
+    let mut bytes = 0;
+    copy(source, source, staging.path(), &mut count, &mut bytes, 0)?;
+    anyhow::ensure!(count > 0, "No images found in this pack");
+    if let Some(banner) = banner {
+        anyhow::ensure!(
+            std::fs::metadata(banner)?.len() <= 32 * 1024 * 1024,
+            "banner exceeds limit"
+        );
+        std::fs::copy(banner, staging.path().join("banner.png"))?;
     }
     model::save_json(
-        &staging.join("package.json"),
-        &json!({"api":1,"id":name,"name":name,"kind":"icons"}),
+        &staging.path().join("package.json"),
+        &json!({"api":1,"id":name,"name":name,"kind":kind,"description":description,"banner":banner.map(|_|"banner.png")}),
     )?;
-    std::fs::rename(staging, destination)?;
-    Ok(())
-}
-pub(crate) fn tempfile_dir(parent: &std::path::Path) -> Result<PathBuf> {
-    let path = parent.join(format!(".pack-{}", std::process::id()));
-    std::fs::create_dir(&path)?;
-    Ok(path)
+    std::fs::rename(staging.path(), &destination)?;
+    Ok(destination)
 }
 
 #[cfg(test)]

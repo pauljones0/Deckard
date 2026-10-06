@@ -169,12 +169,14 @@ pub fn extract(bytes: &[u8], destination: &Path) -> Result<()> {
 }
 pub fn install_archive(bytes: &[u8], kind: &str, root: &Path) -> Result<String> {
     ensure!(
-        ["plugin", "page", "icons"].contains(&kind),
+        ["plugin", "page", "icons", "wallpaper", "sdplusbar"].contains(&kind),
         "unknown package kind"
     );
     let parent = root.join(match kind {
         "plugin" => "plugins-native",
         "page" => "imports",
+        "wallpaper" => "wallpapers-native",
+        "sdplusbar" => "sdplusbar-native",
         _ => "icons-native",
     });
     fs::create_dir_all(&parent)?;

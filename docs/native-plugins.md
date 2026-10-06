@@ -23,6 +23,12 @@ Place `manifest.json` and your executable in one directory under `plugins-native
 
 Action identifiers in pages are `example::hello`. IDs within the manifest must be unique. Fields render as native settings controls; kinds are `string`, `number`, `bool`, `array`. Arrays use a JSON editor. Unknown legacy Python actions remain in documents and are shown for replacement rather than executed.
 
+## Plugin settings and assets
+
+A manifest may also declare `settings` (the same field schema as actions), `assets` (an object mapping icon names to relative image paths), and `colors` (an object mapping names to RGBA byte arrays). **Settings → Plugins → Open Settings** supplies the three native GTK pages. Icon paths/layout and color overrides are saved under `plugins.ID.assets` / `plugins.ID.colors`; native built-ins also honor their icon overrides.
+
+Every `event` request includes `plugin_settings`, the saved object at `plugins.ID`, alongside the action’s own `settings`. A native executable receives JSON, and the host owns all GTK widgets.
+
 ## Protocol
 
 Deckard starts a plugin on its first action, with its own directory as the working directory. Standard input and output carry UTF-8, newline-delimited JSON-RPC 2.0 messages. Keep stdout exclusively for protocol messages. The host currently discards plugin stderr; debugging can use a plugin-owned log file.

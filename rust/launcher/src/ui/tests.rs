@@ -1,5 +1,6 @@
 use super::*;
 
+#[track_caller]
 fn settle(ui: &Rc<Ui>, predicate: impl Fn() -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
@@ -28,6 +29,33 @@ fn find(root: &impl IsA<gtk::Widget>, name: &str) -> Option<gtk::Widget> {
         child = widget.next_sibling();
     }
     None
+}
+
+fn widgets(root: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {
+    fn walk(root: &gtk::Widget, out: &mut Vec<gtk::Widget>) {
+        out.push(root.clone());
+        let mut child = root.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            walk(&widget, out);
+        }
+    }
+    let mut result = Vec::new();
+    walk(root.upcast_ref(), &mut result);
+    result
+}
+fn click_input(root: &impl IsA<gtk::Widget>, name: &str) {
+    let widget = find(root, name).unwrap();
+    let controllers = widget.observe_controllers();
+    for i in 0..controllers.n_items() {
+        if let Some(gesture) = controllers.item(i).and_downcast::<gtk::GestureClick>()
+            && gesture.button() == 1
+        {
+            gesture.emit_by_name::<()>("pressed", &[&1i32, &0f64, &0f64]);
+            return;
+        }
+    }
+    panic!("Input {name} has no primary click handler");
 }
 
 #[test]
@@ -135,45 +163,47 @@ fn gtk_editor_workflows() {
         .iter()
         .filter(|p| p.serial == "FAKE-PLUS-0" && p.physical != 254)
     {
-        assert!(
-            preview.image.paintable().is_some(),
-            "every visible key/strip has a native frame"
-        );
+        if preview.family == "keys" {
+            assert!(preview.image.paintable().is_some());
+        } else {
+            assert!(
+                preview.image.paintable().is_none(),
+                "unconfigured strip matches upstream transparency"
+            );
+        }
         assert_eq!(
             preview.image.height(),
-            if preview.family == "keys" { 75 } else { 50 }
+            if preview.family == "keys" { 75 } else { 48 }
         );
     }
-    find(&ui.deck_stack, "dial-FAKE-PLUS-0-2")
-        .unwrap()
-        .downcast::<gtk::Button>()
-        .unwrap()
-        .emit_clicked();
+    click_input(&ui.deck_stack, "dial-FAKE-PLUS-0-2");
     settle(&ui, || {
-        ui.selection.borrow().family == "dials" && ui.preview.paintable().is_some()
+        ui.selection.borrow().family == "dials" && ui.preview.paintable().is_none()
     });
+    assert_eq!(
+        (ui.preview.width_request(), ui.preview.height_request()),
+        (200, 100)
+    );
+    ui.edit(
+        ui.selection.borrow().clone(),
+        vec!["background".into(), "color".into()],
+        json!([60, 90, 120, 255]),
+    );
+    settle(&ui, || ui.preview.paintable().is_some());
     let dial = ui.preview.paintable().unwrap();
     assert_eq!(
         (dial.intrinsic_width(), dial.intrinsic_height()),
         (200, 100)
     );
-    find(&ui.deck_stack, "key-FAKE-PLUS-0-0x0")
-        .unwrap()
-        .downcast::<gtk::Button>()
-        .unwrap()
-        .emit_clicked();
+    click_input(&ui.deck_stack, "key-FAKE-PLUS-0-0x0");
     settle(&ui, || ui.selection.borrow().family == "keys");
     let row = find(&ui.controls, "labels/center/text")
         .unwrap()
-        .downcast::<adw::EntryRow>()
+        .downcast::<gtk::Entry>()
         .unwrap();
     row.set_text("Edited in Rust GTK");
     // Rapid key changes must not redirect queued edits to the new selection.
-    find(&ui.deck_stack, "key-FAKE-PLUS-0-1x0")
-        .unwrap()
-        .downcast::<gtk::Button>()
-        .unwrap()
-        .emit_clicked();
+    click_input(&ui.deck_stack, "key-FAKE-PLUS-0-1x0");
     settle(&ui, || ui.selection.borrow().input == "1x0");
     let engine = shared.lock().unwrap();
     assert_eq!(
@@ -200,33 +230,20 @@ fn gtk_editor_workflows() {
             .get("1")
             .is_some()
     });
-    find(&ui.state_box, "state-1")
+    widgets(&ui.state_box)
+        .into_iter()
+        .find_map(|w| w.downcast::<gtk::StackSwitcher>().ok())
         .unwrap()
-        .downcast::<gtk::ToggleButton>()
+        .stack()
         .unwrap()
-        .emit_clicked();
+        .set_visible_child_name("1");
     settle(&ui, || ui.selection.borrow().state == 1);
     ui.choose_action(None);
-    let mut list = Vec::new();
-    fn walk(widget: &gtk::Widget, list: &mut Vec<adw::ActionRow>) {
-        if let Some(row) = widget.downcast_ref::<adw::ActionRow>() {
-            list.push(row.clone());
-        }
-        let mut child = widget.first_child();
-        while let Some(w) = child {
-            walk(&w, list);
-            child = w.next_sibling();
-        }
-    }
-    walk(&ui.sidebar.clone().upcast(), &mut list);
-    let row = list
-        .iter()
-        .find(|r| {
-            r.widget_name()
-                .starts_with("native::OSPlugin-OpenInBrowser ")
-        })
-        .unwrap();
-    row.emit_by_name::<()>("activated", &[]);
+    find(&ui.sidebar, "native::OSPlugin-OpenInBrowser")
+        .unwrap()
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
     settle(&ui, || {
         model::state(&shared.lock().unwrap().docs.pages["Main"], "keys", "1x0", 1)["actions"]
             .as_array()
@@ -268,40 +285,45 @@ fn gtk_editor_workflows() {
     ui.select_device("FAKE-PLUS-0");
     ui.deck_stack.set_visible_child_name("FAKE-PLUS-0");
     settle(&ui, || ui.preview.paintable().is_some());
-    // GTK dialogs and structural edits must update their lists without reopening.
+    // The original Settings is a separate PreferencesWindow with seven pages.
     ui.settings();
-    let dialog = ui.window.visible_dialog().unwrap();
-    let root_widget = dialog.child().unwrap();
-    for count in [1, 2] {
-        find(&root_widget, "add-rule")
-            .unwrap()
-            .downcast::<adw::ActionRow>()
-            .unwrap()
-            .emit_by_name::<()>("activated", &[]);
-        settle(&ui, || {
-            shared.lock().unwrap().docs.settings["rules"]
-                .as_array()
-                .is_some_and(|r| r.len() == count)
-        });
-        assert!(find(&root_widget, &format!("remove-rule-{}", count - 1)).is_some());
-    }
-    find(&root_widget, "remove-rule-0")
-        .unwrap()
-        .downcast::<adw::ActionRow>()
-        .unwrap()
-        .emit_by_name::<()>("activated", &[]);
+    let settings = ui.auxiliary_windows.borrow()["Settings"].clone();
+    let titles = widgets(&settings)
+        .into_iter()
+        .filter_map(|w| w.downcast::<adw::PreferencesPage>().ok())
+        .map(|page| page.title().to_string())
+        .filter(|title| !title.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        titles,
+        [
+            "General",
+            "UI",
+            "Store",
+            "Performance",
+            "System",
+            "Developer",
+            "Plugins"
+        ]
+    );
+    let hold = widgets(&settings)
+        .into_iter()
+        .filter_map(|w| w.downcast::<adw::SpinRow>().ok())
+        .find(|row| row.title() == "Minimum hold duration (s)")
+        .unwrap();
+    hold.set_value(0.75);
     settle(&ui, || {
-        shared.lock().unwrap().docs.settings["rules"]
-            .as_array()
-            .is_some_and(|r| r.len() == 1)
+        shared.lock().unwrap().docs.settings["hold_ms"].as_u64() == Some(750)
     });
-    assert!(find(&root_widget, "remove-rule-1").is_none());
-    dialog.close();
-    settle(&ui, || ui.window.visible_dialog().is_none());
+    settings.close();
+    settle(&ui, || {
+        !ui.auxiliary_windows.borrow().contains_key("Settings")
+    });
     ui.obs_profiles();
     let dialog = ui.window.visible_dialog().unwrap();
     let root_widget = dialog.child().unwrap();
-    find(&root_widget, "Save as new")
+    settle(&ui, || find(&root_widget, "Add Profile").is_some());
+    find(&root_widget, "Add Profile")
         .unwrap()
         .downcast::<gtk::Button>()
         .unwrap()
@@ -311,19 +333,18 @@ fn gtk_editor_workflows() {
             .as_object()
             .is_some_and(|p| p.len() == 1)
     });
-    let combo = find(&root_widget, "obs-profile")
+    let profiles = find(&root_widget, "obs-profiles")
         .unwrap()
-        .downcast::<adw::ComboRow>()
+        .downcast::<gtk::ListBox>()
         .unwrap();
     assert!(
-        combo
-            .selected_item()
-            .and_downcast::<gtk::StringObject>()
+        profiles
+            .selected_row()
             .unwrap()
-            .string()
+            .widget_name()
             .starts_with("profile-")
     );
-    find(&root_widget, "Delete")
+    find(&root_widget, "Delete Profile")
         .unwrap()
         .downcast::<gtk::Button>()
         .unwrap()
@@ -333,14 +354,7 @@ fn gtk_editor_workflows() {
             .as_object()
             .is_some_and(|p| p.is_empty())
     });
-    assert_eq!(
-        combo
-            .selected_item()
-            .and_downcast::<gtk::StringObject>()
-            .unwrap()
-            .string(),
-        "default"
-    );
+    assert!(profiles.selected_row().is_none());
     dialog.close();
     settle(&ui, || ui.window.visible_dialog().is_none());
     shared
@@ -357,35 +371,40 @@ fn gtk_editor_workflows() {
         })
         .unwrap();
     ui.page_settings();
-    let dialog = ui.window.visible_dialog().unwrap();
-    let root_widget = dialog.child().unwrap();
-    find(&root_widget, "remove-slide-0")
-        .unwrap()
-        .downcast::<gtk::Button>()
-        .unwrap()
-        .emit_clicked();
+    let manager = ui.auxiliary_windows.borrow()["Page Manager"].clone();
+    let enable = widgets(&manager)
+        .into_iter()
+        .filter_map(|w| w.downcast::<adw::SwitchRow>().ok())
+        .find(|row| row.title() == "Enable")
+        .unwrap();
+    enable.set_active(true);
     settle(&ui, || {
-        shared.lock().unwrap().docs.pages["Main"]["background"]["media-paths"]
-            == json!(["second.png"])
+        shared.lock().unwrap().docs.pages["Main"]["settings"]["auto-change"]["enable"] == true
     });
-    assert!(find(&root_widget, "remove-slide-0").is_some());
-    assert!(find(&root_widget, "remove-slide-1").is_none());
-    dialog.close();
-    settle(&ui, || ui.window.visible_dialog().is_none());
+    assert_eq!(
+        shared.lock().unwrap().docs.pages["Main"]["background"]["media-paths"],
+        json!(["first.png", "second.png"])
+    );
+    manager.close();
+    settle(&ui, || ui.page_manager.borrow().is_none());
     find(&ui.controls, "selected-icon")
         .unwrap()
         .downcast::<gtk::Button>()
         .unwrap()
         .emit_clicked();
-    assert_eq!(ui.window.visible_dialog().unwrap().title(), "Assets");
-    ui.window.visible_dialog().unwrap().close();
-    settle(&ui, || ui.window.visible_dialog().is_none());
+    let assets = ui.auxiliary_windows.borrow()["Asset Manager"].clone();
+    assets.close();
+    settle(&ui, || {
+        !ui.auxiliary_windows.borrow().contains_key("Asset Manager")
+    });
     ui.device_settings();
-    ui.window.visible_dialog().unwrap().close();
-    settle(&ui, || ui.window.visible_dialog().is_none());
+    assert!(ui.deck_settings_visible.get());
+    ui.device_settings();
+    assert!(!ui.deck_settings_visible.get());
     ui.store();
     ui.show_catalog(json!([]));
-    ui.window.visible_dialog().unwrap().close();
+    let store = ui.catalog_dialog.borrow().clone().unwrap();
+    store.close();
     settle(&ui, || ui.catalog_dialog.borrow().is_none());
     ui.window.close();
     settle(&ui, || !ui.window.is_visible());

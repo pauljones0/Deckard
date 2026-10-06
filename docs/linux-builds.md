@@ -2,7 +2,7 @@
 
 The default pipeline produces distro-native packages for CachyOS rolling (x86_64), Fedora 44 stable and Ubuntu 26.04 LTS (x86_64 and aarch64). Each binary is compiled inside its target distribution. The [GTK4/libadwaita editor](ui-restoration.md) and application engine are implemented in Rust.
 
-Packages contain Deckard, its example native plugin, desktop icon, USB rules, documentation and license records. FFmpeg, audio/input helpers and shared libraries come from the distribution's package manager. There is no bundled system-library directory or `LD_LIBRARY_PATH` wrapper. Linked dependencies are generated with `dpkg-shlibdeps` for DEB and RPM's automatic ELF dependency detection; subprocess and dynamically loaded dependencies are explicit. Packages require GTK 4.16+ and libadwaita 1.6+, including the Adwaita icon theme.
+Packages contain Deckard, its example native plugin, desktop icon, USB rules, documentation and license records. FFmpeg, audio/input helpers and shared libraries come from the distribution's package manager. There is no bundled system-library directory or `LD_LIBRARY_PATH` wrapper. Linked dependencies are generated with `dpkg-shlibdeps` for DEB and RPM's automatic ELF dependency detection; subprocess and dynamically loaded dependencies are explicit. Packages require GTK 4.16+ and libadwaita 1.7+, including the Adwaita icon theme.
 
 ## Build and verify
 
@@ -38,4 +38,4 @@ Download the matching `SHA256SUMS-<target>-<architecture>` and run `sha256sum --
 
 Deckard is GPL-3.0-or-later. Source and Cargo.lock are in the release tag. Native packages include Rust dependency license records, including statically linked libjpeg-turbo; system libraries retain their distribution-managed licenses and source packages. Legacy portable bundles additionally record corresponding Ubuntu source versions and copyrights.
 
-Container checks cover installation, rendering and startup. They do not establish physical USB throughput, real desktop interactions, ARM performance or a full GTK frontend. [Performance measurements](performance.md) retain their original workloads and version labels.
+Container checks cover installation, rendering, startup and GTK interactions. Physical USB throughput, real desktop portal integrations and ARM performance remain separate checks. [Performance measurements](performance.md) retain their original workloads and version labels.

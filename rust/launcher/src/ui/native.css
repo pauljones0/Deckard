@@ -1,8 +1,1 @@
-/* Native additions reuse the original upstream classes and proportions. */
-.deckard-strip { background: #363636; border-radius: 10px; }
-.deckard-dial { padding: 0; border-radius: 50%; background: #363636; min-width: 75px; min-height: 75px; }
-.deckard-key { padding: 0; min-width: 0; min-height: 0; background: none; box-shadow: none; }
-.deckard-state { min-width: 105px; }
-.deckard-editor-row { padding: 10px 15px; }
-.deckard-asset { border-radius: 10px; padding: 8px; }
-.add-action-button { background-color: var(--accent-bg-color); color: var(--accent-fg-color); padding: 2px 12px; }
+/* The editor shares the direct upstream stylesheet in style.css. */

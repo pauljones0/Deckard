@@ -2,8 +2,23 @@ use deckard_core::engine::Shared;
 use ksni::{Tray, blocking::TrayMethods, menu::StandardItem};
 struct DeckardTray {
     shared: Shared,
+    visible: bool,
+}
+static SERVICE: std::sync::OnceLock<ksni::blocking::Handle<DeckardTray>> =
+    std::sync::OnceLock::new();
+pub fn set_visible(visible: bool) {
+    if let Some(handle) = SERVICE.get() {
+        handle.update(|tray| tray.visible = visible);
+    }
 }
 impl Tray for DeckardTray {
+    fn status(&self) -> ksni::Status {
+        if self.visible {
+            ksni::Status::Active
+        } else {
+            ksni::Status::Passive
+        }
+    }
     fn id(&self) -> String {
         "deckard".into()
     }
@@ -80,5 +95,10 @@ impl Drop for Handle {
     }
 }
 pub fn start(shared: Shared) -> Option<Handle> {
-    DeckardTray { shared }.spawn().ok().map(Handle)
+    let visible = shared.lock().unwrap().docs.settings["ui"]["tray-icon"]
+        .as_bool()
+        .unwrap_or(true);
+    let handle = DeckardTray { shared, visible }.spawn().ok()?;
+    let _ = SERVICE.set(handle.clone());
+    Some(Handle(handle))
 }

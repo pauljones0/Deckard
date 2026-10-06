@@ -67,6 +67,11 @@ impl PreviewImage {
         obj.set_size_request(width, height);
         obj
     }
+    pub fn set_logical_size(&self, width: i32, height: i32) {
+        self.imp().size.set((width, height));
+        self.set_size_request(width, height);
+        self.queue_resize();
+    }
     pub fn paintable(&self) -> Option<gdk::Paintable> {
         self.imp().paintable.borrow().clone()
     }
