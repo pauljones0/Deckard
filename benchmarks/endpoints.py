@@ -41,26 +41,35 @@ def prepare(data, model, media):
 def validate(data, model, seconds):
     first=native_status(data)["devices"][0]
     before={}; changes={}; sizes={}; start=time.monotonic()
-    while time.monotonic()-start < seconds:
-        state=native_status(data)
+    if first.get("tile_updates") is not None:
+        # Two snapshots avoid aliasing and do not continuously contend with rendering.
+        time.sleep(seconds)
+        state=native_status(data); device=state["devices"][0]
         if state["errors"]: raise RuntimeError(state["errors"])
-        device=state["devices"][0]
         for tile in device["frame_tiles"]:
             key=str(tile["key"]); sizes[key]=[tile["width"],tile["height"]]
-            if key in before and before[key]!=tile["identity"]: changes[key]=changes.get(key,0)+1
-            before[key]=tile["identity"]
-        time.sleep(0.001)
-    elapsed=time.monotonic()-start
-    rows,cols,size=MODELS[model]
-    assert len(before)==rows*cols and len(changes)==rows*cols,(model,changes)
-    assert all(value==list(size) for value in sizes.values()),sizes
-    method="observed pixel identities (legacy observer limited to ~50 polls/s)"
-    if first.get("tile_updates") is not None:
         elapsed=(device["frame_clock_us"]-first["frame_clock_us"])/1e6
         changes={key:device["tile_updates"].get(key,0)-first["tile_updates"].get(key,0) for key in sizes}
-        method="actual changed-tile counters over the engine monotonic clock"
+        method="two changed-tile counter snapshots over the engine monotonic clock"
+        polling=None
+    else:
+        while time.monotonic()-start < seconds:
+            state=native_status(data)
+            if state["errors"]: raise RuntimeError(state["errors"])
+            device=state["devices"][0]
+            for tile in device["frame_tiles"]:
+                key=str(tile["key"]); sizes[key]=[tile["width"],tile["height"]]
+                if key in before and before[key]!=tile["identity"]: changes[key]=changes.get(key,0)+1
+                before[key]=tile["identity"]
+            time.sleep(0.001)
+        elapsed=time.monotonic()-start
+        method="observed pixel identities (legacy socket limited to ~50 polls/s; renderer below 30 FPS)"
+        polling=1
+    rows,cols,size=MODELS[model]
+    assert len(changes)==rows*cols and all(value>0 for value in changes.values()),(model,changes)
+    assert all(value==list(size) for value in sizes.values()),sizes
     fps={key:value/elapsed for key,value in changes.items()}
-    return {"seconds":elapsed,"method":method,"poll_interval_ms":1,"fps_per_key":fps,"fps_min":min(fps.values()),"fps_max":max(fps.values()),"sizes":sizes,"written_tiles":device.get("written_tiles"),"instrumented":True}
+    return {"seconds":elapsed,"method":method,"poll_interval_ms":polling,"fps_per_key":fps,"fps_min":min(fps.values()),"fps_max":max(fps.values()),"sizes":sizes,"written_tiles":device.get("written_tiles"),"instrumented":True}
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
